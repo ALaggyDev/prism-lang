@@ -1,0 +1,9 @@
+let a = 2;
+
+fn abc(a, b, c) {
+	let p = a + b * 2 + sqrt(c);
+	p = 1;
+	return p;
+}
+
+abc(a, 2, 5);
