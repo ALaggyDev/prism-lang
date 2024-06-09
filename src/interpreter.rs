@@ -7,7 +7,7 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub struct Interpreter {
-    pub scopes: Vec<Scope>,
+    scopes: Vec<Scope>,
 }
 
 impl Interpreter {
@@ -17,12 +17,25 @@ impl Interpreter {
         }
     }
 
+    pub fn eval_in_scope(
+        &mut self,
+        func: impl FnOnce(&mut Self) -> Result<Value, RuntimeError>,
+    ) -> Result<Value, RuntimeError> {
+        self.scopes.push(Scope::new());
+
+        let res = func(self);
+
+        self.scopes.pop();
+
+        res
+    }
+
     pub fn get_scope(&self) -> &Scope {
-        self.scopes.last().unwrap()
+        unsafe { self.scopes.last().unwrap_unchecked() }
     }
 
     pub fn get_scope_mut(&mut self) -> &mut Scope {
-        self.scopes.last_mut().unwrap()
+        unsafe { self.scopes.last_mut().unwrap_unchecked() }
     }
 
     pub fn add_var(&mut self, ident: Ident, value: Value) {
@@ -52,7 +65,7 @@ impl Interpreter {
 
 #[derive(Clone, Debug)]
 pub struct Scope {
-    pub vars: HashMap<Ident, Value>,
+    vars: HashMap<Ident, Value>,
 }
 
 impl Scope {
@@ -241,22 +254,12 @@ impl Evalulate for Stmt {
 
 impl Evalulate for Block {
     fn evalulate(&self, ins: &mut Interpreter) -> Result<Value, RuntimeError> {
-        ins.scopes.push(Scope::new());
-
-        let res = 'outer: {
+        ins.eval_in_scope(|ins| {
             for stmt in self.0.iter() {
-                let temp = stmt.evalulate(ins);
-                if temp.is_err() {
-                    break 'outer temp;
-                }
+                stmt.evalulate(ins)?;
             }
 
             Ok(Value::Null)
-        };
-
-        // We want this to be called, even if stmt.evalulate(ins) returns Err(_), hence the label instead of ? operator
-        ins.scopes.pop();
-
-        res
+        })
     }
 }
