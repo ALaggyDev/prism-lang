@@ -2,6 +2,8 @@ use logos::Logos;
 
 #[derive(Logos, Clone, Debug, PartialEq)]
 #[logos(skip r"[ \t\r\n]+")]
+#[logos(skip r"\/\/[^\r\n]*")] // Line comment
+#[logos(skip r"\/\*([^*]|\*[^/])*\*\/")] // Block comment (unnested)
 pub enum Token {
     #[regex("[a-zA-Z_][a-zA-Z0-9_]*", |lex| Ident(lex.slice().into()), priority = 1)]
     Ident(Ident),
@@ -69,7 +71,7 @@ pub enum Token {
     #[token("false", |_| Literal::Bool(false))]
     #[token("Infinity", |_| Literal::Number(f64::INFINITY))]
     #[token("NaN", |_| Literal::Number(f64::NAN))]
-    #[regex(r"(\d*\.\d+|\d+)([eE][+-]?\d+)?", |lex| Literal::Number(lex.slice().parse::<f64>().unwrap()))]
+    #[regex(r"([0-9]*\.)?[0-9]+([eE][+-]?[0-9]+)?", |lex| Literal::Number(lex.slice().parse::<f64>().unwrap()))]
     #[regex(r#""[^"\r\n]*""#, |lex| Literal::String(lex.slice()[1..lex.slice().len() - 1].into()))]
     Literal(Literal),
 

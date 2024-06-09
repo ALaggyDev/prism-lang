@@ -35,6 +35,14 @@ impl<'a> Parser<'a> {
     }
 }
 
+macro_rules! expect_token {
+    ($parser: expr, $pat: pat, $($arg:tt)*) => {
+        let $pat = $parser.read() else {
+            panic!($($arg)*);
+        };
+    };
+}
+
 pub trait Parse: Sized {
     fn parse(parser: &mut Parser) -> Self;
 }
@@ -143,9 +151,7 @@ impl Expr {
             Token::Literal(literal) => Expr::Literal(literal),
             Token::OpenParen => {
                 let expr = Expr::parse(parser);
-                let Token::CloseParen = parser.read() else {
-                    panic!("Expected closing paraenesis.");
-                };
+                expect_token!(parser, Token::CloseParen, "Expected closing paraenesis.");
                 expr
             }
             Token::Minus => Expr::Unary(UnaryOp::Negation, Box::new(Expr::parse(parser))),
@@ -258,20 +264,14 @@ impl Parse for Stmt {
             Token::Fn => {
                 parser.advance();
 
-                let Token::Ident(ident) = parser.read() else {
-                    panic!("Expected ident.");
-                };
+                expect_token!(parser, Token::Ident(ident), "Expected ident.");
 
-                let Token::OpenParen = parser.read() else {
-                    panic!("Expected opening paraenesis.");
-                };
+                expect_token!(parser, Token::OpenParen, "Expected opening paraenesis.");
 
                 let mut parameters = Vec::new();
 
                 loop {
-                    let Token::Ident(ident) = parser.read() else {
-                        panic!("Expected ident.");
-                    };
+                    expect_token!(parser, Token::Ident(ident), "Expected ident.");
 
                     parameters.push(ident);
 
@@ -291,27 +291,19 @@ impl Parse for Stmt {
 
                 let expr = Expr::parse(parser);
 
-                let Token::Semicolon = parser.read() else {
-                    panic!("Expected semicolon.");
-                };
+                expect_token!(parser, Token::Semicolon, "Expected semicolon.");
 
                 Self::Return(expr)
             }
             Token::Let => {
                 parser.advance();
 
-                let Token::Ident(ident) = parser.read() else {
-                    panic!("Expected ident.");
-                };
-                let Token::Assign = parser.read() else {
-                    panic!("Expected assignment.");
-                };
+                expect_token!(parser, Token::Ident(ident), "Expected ident.");
+                expect_token!(parser, Token::Assign, "Expected assignment.");
 
                 let expr = Expr::parse(parser);
 
-                let Token::Semicolon = parser.read() else {
-                    panic!("Expected semicolon.");
-                };
+                expect_token!(parser, Token::Semicolon, "Expected semicolon.");
 
                 Self::Let(ident, expr)
             }
@@ -322,15 +314,11 @@ impl Parse for Stmt {
                 let mut else_branch = None;
 
                 loop {
-                    let Token::OpenParen = parser.read() else {
-                        panic!("Expected opening paraenesis.");
-                    };
+                    expect_token!(parser, Token::OpenParen, "Expected opening paraenesis.");
 
                     let expr = Expr::parse(parser);
 
-                    let Token::CloseParen = parser.read() else {
-                        panic!("Expected closing paraenesis.");
-                    };
+                    expect_token!(parser, Token::CloseParen, "Expected closing paraenesis.");
 
                     let block = Block::parse(parser);
 
@@ -359,9 +347,7 @@ impl Parse for Stmt {
             _ => {
                 let expr = Expr::parse(parser);
 
-                let Token::Semicolon = parser.read() else {
-                    panic!("Expected semicolon.");
-                };
+                expect_token!(parser, Token::Semicolon, "Expected semicolon.");
 
                 Self::Expr(expr)
             }
@@ -374,9 +360,7 @@ pub struct Block(pub Box<[Stmt]>);
 
 impl Parse for Block {
     fn parse(parser: &mut Parser) -> Self {
-        let Token::OpenBrace = parser.read() else {
-            panic!("Expected opening brace.");
-        };
+        expect_token!(parser, Token::OpenBrace, "Expected opening brace.");
 
         let mut stmts = vec![];
 
