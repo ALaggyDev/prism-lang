@@ -52,17 +52,18 @@ pub enum Expr {
     Literal(Literal),
     Variable(Ident),
     FunctionCall(Ident, Box<[Expr]>),
+    Grouped(Box<Expr>),
     Unary(UnaryOp, Box<Expr>),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UnaryOp {
     Negation,
     Not,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BinaryOp {
     Assign,
 
@@ -152,7 +153,7 @@ impl Expr {
             Token::OpenParen => {
                 let expr = Expr::parse(parser);
                 expect_token!(parser, Token::CloseParen, "Expected closing paraenesis.");
-                expr
+                Expr::Grouped(expr.into())
             }
             Token::Minus => Expr::Unary(UnaryOp::Negation, Box::new(Expr::parse(parser))),
             Token::Not => Expr::Unary(UnaryOp::Not, Box::new(Expr::parse(parser))),
@@ -252,6 +253,7 @@ impl Parse for Expr {
 #[derive(Clone, Debug)]
 pub enum Stmt {
     Expr(Expr),
+    Block(Block),
     Fn(Ident, Box<[Ident]>, Block),
     Return(Expr),
     Let(Ident, Expr),
@@ -261,6 +263,7 @@ pub enum Stmt {
 impl Parse for Stmt {
     fn parse(parser: &mut Parser) -> Self {
         match parser.peek() {
+            Token::OpenBrace => Self::Block(Block::parse(parser)),
             Token::Fn => {
                 parser.advance();
 

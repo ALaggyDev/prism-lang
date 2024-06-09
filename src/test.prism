@@ -1,9 +1,14 @@
 // this is a block comment
 /* this is a line comment */
-if (0 > 1) {
-	1000;
-} else if (0 > 1) {
-	3;
-} else {
-	2;
+
+let abc = 0;
+
+if (abc < 2) {
+	abc = abc + 5;
+	print(abc);
+
+	let abc = "Some string";
+	print(abc);
 }
+
+print(abc);

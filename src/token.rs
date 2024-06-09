@@ -78,7 +78,8 @@ pub enum Token {
     Eof,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+// TODO: Make Ident not owned and Copy, e.g. multiple Ident can point to the same memory
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Ident(pub Box<str>);
 
 #[derive(Clone, Debug, PartialEq)]

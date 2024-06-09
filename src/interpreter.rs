@@ -1,8 +1,69 @@
+use std::collections::HashMap;
+
 use crate::{
     ast::{BinaryOp, Block, Expr, Stmt, UnaryOp},
-    token::Literal,
+    token::{Ident, Literal},
 };
 
+#[derive(Clone, Debug)]
+pub struct Interpreter {
+    pub scopes: Vec<Scope>,
+}
+
+impl Interpreter {
+    pub fn new() -> Self {
+        Self {
+            scopes: vec![Scope::new()],
+        }
+    }
+
+    pub fn get_scope(&self) -> &Scope {
+        self.scopes.last().unwrap()
+    }
+
+    pub fn get_scope_mut(&mut self) -> &mut Scope {
+        self.scopes.last_mut().unwrap()
+    }
+
+    pub fn add_var(&mut self, ident: Ident, value: Value) {
+        self.get_scope_mut().vars.insert(ident, value);
+    }
+
+    pub fn get_var(&self, ident: &Ident) -> Result<&Value, RuntimeError> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(value) = scope.vars.get(ident) {
+                return Ok(value);
+            }
+        }
+
+        Err(RuntimeError("Variable not defined.".into()))
+    }
+
+    pub fn get_var_mut(&mut self, ident: &Ident) -> Result<&mut Value, RuntimeError> {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(value) = scope.vars.get_mut(ident) {
+                return Ok(value);
+            }
+        }
+
+        Err(RuntimeError("Variable not defined.".into()))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Scope {
+    pub vars: HashMap<Ident, Value>,
+}
+
+impl Scope {
+    pub fn new() -> Self {
+        Self {
+            vars: HashMap::new(),
+        }
+    }
+}
+
+// TODO: Wrap Rc on Value to avoid cloning
 #[derive(Clone, Debug)]
 pub enum Value {
     Null,
@@ -15,7 +76,7 @@ pub enum Value {
 pub struct RuntimeError(pub Box<str>);
 
 pub trait Evalulate: Sized {
-    fn evalulate(&self) -> Result<Value, RuntimeError>;
+    fn evalulate(&self, ins: &mut Interpreter) -> Result<Value, RuntimeError>;
 }
 
 impl Value {
@@ -41,8 +102,8 @@ impl Value {
 }
 
 impl UnaryOp {
-    fn evalulate_op(&self, op1: &Expr) -> Result<Value, RuntimeError> {
-        let op1 = op1.evalulate()?;
+    fn evalulate_op(&self, ins: &mut Interpreter, op1: &Expr) -> Result<Value, RuntimeError> {
+        let op1 = op1.evalulate(ins)?;
 
         match self {
             UnaryOp::Negation => match op1 {
@@ -55,15 +116,30 @@ impl UnaryOp {
 }
 
 impl BinaryOp {
-    fn evalulate_op(&self, op1: &Box<Expr>, op2: &Expr) -> Result<Value, RuntimeError> {
+    fn evalulate_op(
+        &self,
+        ins: &mut Interpreter,
+        op1: &Expr,
+        op2: &Expr,
+    ) -> Result<Value, RuntimeError> {
         // Assignment have special treatment
         if let BinaryOp::Assign = self {
-            todo!()
-            // TODO: return
+            // We might need to handle this properly in the future (i.e. l-values), for now this will work
+
+            let Expr::Variable(ident) = op1 else {
+                return Err(RuntimeError(
+                    "Ident expected on left hand side of assignment.".into(),
+                ));
+            };
+
+            let val = op2.evalulate(ins)?;
+            *ins.get_var_mut(ident)? = val.clone();
+
+            return Ok(val);
         }
 
-        let op1 = op1.evalulate()?;
-        let op2 = op2.evalulate()?;
+        let op1 = op1.evalulate(ins)?;
+        let op2 = op2.evalulate(ins)?;
 
         Ok(match self {
             BinaryOp::Assign => unreachable!(),
@@ -105,7 +181,7 @@ impl BinaryOp {
 }
 
 impl Evalulate for Expr {
-    fn evalulate(&self) -> Result<Value, RuntimeError> {
+    fn evalulate(&self, ins: &mut Interpreter) -> Result<Value, RuntimeError> {
         Ok(match self {
             Expr::Literal(val) => match val {
                 Literal::Null => Value::Null,
@@ -113,31 +189,48 @@ impl Evalulate for Expr {
                 Literal::Number(val) => Value::Number(*val),
                 Literal::String(val) => Value::String(val.clone()), // TODO: Don't use clone
             },
-            Expr::Variable(_) => todo!(),
-            Expr::FunctionCall(_, _) => todo!(),
-            Expr::Unary(op, op_1) => op.evalulate_op(op_1)?,
-            Expr::Binary(op, op_1, op_2) => op.evalulate_op(op_1, op_2)?,
+            Expr::Variable(ident) => ins.get_var(ident)?.clone(),
+            Expr::FunctionCall(ident, expr) => {
+                // TODO: REMOVE THIS
+                if &*ident.0 == "print" {
+                    println!("{:?}", (expr[0]).evalulate(ins)?);
+                    Value::Null
+                } else {
+                    todo!()
+                }
+            }
+            Expr::Grouped(expr) => expr.evalulate(ins)?,
+            Expr::Unary(op, op_1) => op.evalulate_op(ins, op_1)?,
+            Expr::Binary(op, op_1, op_2) => op.evalulate_op(ins, op_1, op_2)?,
         })
     }
 }
 
 impl Evalulate for Stmt {
-    fn evalulate(&self) -> Result<Value, RuntimeError> {
+    fn evalulate(&self, ins: &mut Interpreter) -> Result<Value, RuntimeError> {
         match self {
-            Stmt::Expr(expr) => println!("Stmt expr eval result: {:?}", expr.evalulate()?),
+            Stmt::Expr(expr) => {
+                expr.evalulate(ins)?;
+            }
+            Stmt::Block(block) => {
+                block.evalulate(ins)?;
+            }
             Stmt::Fn(_, _, _) => todo!(),
             Stmt::Return(_) => todo!(),
-            Stmt::Let(_, _) => todo!(),
+            Stmt::Let(ident, expr) => {
+                let val = expr.evalulate(ins)?;
+                ins.add_var(ident.clone(), val);
+            }
             Stmt::If(branches, else_branch) => 'outer: {
                 for (cond, branch) in branches.iter() {
-                    if cond.evalulate()?.is_truthy() {
-                        branch.evalulate()?;
+                    if cond.evalulate(ins)?.is_truthy() {
+                        branch.evalulate(ins)?;
                         break 'outer;
                     }
                 }
 
                 if let Some(else_branch) = else_branch {
-                    else_branch.evalulate()?;
+                    else_branch.evalulate(ins)?;
                 }
             }
         };
@@ -147,11 +240,23 @@ impl Evalulate for Stmt {
 }
 
 impl Evalulate for Block {
-    fn evalulate(&self) -> Result<Value, RuntimeError> {
-        for stmt in self.0.iter() {
-            stmt.evalulate()?;
-        }
+    fn evalulate(&self, ins: &mut Interpreter) -> Result<Value, RuntimeError> {
+        ins.scopes.push(Scope::new());
 
-        Ok(Value::Null)
+        let res = 'outer: {
+            for stmt in self.0.iter() {
+                let temp = stmt.evalulate(ins);
+                if temp.is_err() {
+                    break 'outer temp;
+                }
+            }
+
+            Ok(Value::Null)
+        };
+
+        // We want this to be called, even if stmt.evalulate(ins) returns Err(_), hence the label instead of ? operator
+        ins.scopes.pop();
+
+        res
     }
 }

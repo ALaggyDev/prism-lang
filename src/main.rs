@@ -1,11 +1,11 @@
 use ast::{Parse, Parser, Stmt};
-use interpreter::{Evalulate, RuntimeError};
+use interpreter::{Evalulate, Interpreter, RuntimeError};
 use logos::Logos;
 use token::Token;
 
-mod ast;
-mod interpreter;
-mod token;
+pub mod ast;
+pub mod interpreter;
+pub mod token;
 
 fn stage_1(program: &str) -> Vec<Token> {
     let mut lex = Token::lexer(program);
@@ -42,8 +42,10 @@ fn stage_2(tokens: &[Token]) -> Vec<Stmt> {
 }
 
 fn interpret(program: &[Stmt]) -> Result<(), RuntimeError> {
+    let mut ins = Interpreter::new();
+
     for stmt in program {
-        stmt.evalulate()?;
+        stmt.evalulate(&mut ins)?;
     }
 
     Ok(())
