@@ -1,8 +1,10 @@
 use ast::{Parse, Parser, Stmt};
+use interpreter::{Evalulate, RuntimeError};
 use logos::Logos;
 use token::Token;
 
 mod ast;
+mod interpreter;
 mod token;
 
 fn stage_1(program: &str) -> Vec<Token> {
@@ -27,7 +29,7 @@ fn stage_1(program: &str) -> Vec<Token> {
     tokens
 }
 
-fn stage_2(tokens: &[Token]) {
+fn stage_2(tokens: &[Token]) -> Vec<Stmt> {
     let mut parser = Parser::new(tokens);
 
     let mut stmts = vec![];
@@ -36,13 +38,23 @@ fn stage_2(tokens: &[Token]) {
         stmts.push(Stmt::parse(&mut parser));
     }
 
-    println!("{:?}", stmts);
+    stmts
+}
+
+fn interpret(program: &[Stmt]) -> Result<(), RuntimeError> {
+    for stmt in program {
+        stmt.evalulate()?;
+    }
+
+    Ok(())
 }
 
 fn main() {
     println!("Prism!");
 
     let tokens = stage_1(include_str!("./test.prism"));
+    let program = stage_2(&tokens);
 
-    stage_2(&tokens);
+    let res = interpret(&program);
+    println!("{:?}", res);
 }
