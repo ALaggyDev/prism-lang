@@ -3,16 +3,16 @@ use std::rc::Rc;
 use crate::token::{Ident, Literal, Token};
 
 #[derive(Clone, Debug)]
-pub struct Parser<'a> {
-    rem: &'a [Token],
+pub struct Parser<'cx> {
+    rem: &'cx [Token<'cx>],
 }
 
 #[derive(Clone, Debug)]
 pub struct CompileError(pub Box<str>);
 
-impl<'a> Parser<'a> {
-    pub fn new(tokens: &'a [Token]) -> Self {
-        Self { rem: tokens }
+impl<'cx> Parser<'cx> {
+    pub fn new(tokens: &'cx [Token<'cx>]) -> Self {
+        Self { rem: tokens}
     }
 
     pub fn advance(&mut self) {
@@ -21,7 +21,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn peek(&self) -> &Token {
+    pub fn peek(&self) -> &Token<'cx> {
         if !self.rem.is_empty() {
             &self.rem[0]
         } else {
@@ -29,7 +29,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn read(&mut self) -> Token {
+    pub fn read(&mut self) -> Token<'cx> {
         let token = self.peek().clone();
         self.advance();
         token
@@ -71,18 +71,18 @@ macro_rules! read_vec {
     }};
 }
 
-pub trait Parse: Sized {
-    fn parse(parser: &mut Parser) -> Result<Self, CompileError>;
+pub trait Parse<'cx>: Sized {
+    fn parse(parser: &mut Parser<'cx>) -> Result<Self, CompileError>;
 }
 
 #[derive(Clone, Debug)]
-pub enum Expr {
+pub enum Expr<'cx> {
     Literal(Literal),
-    Variable(Ident),
-    FunctionCall(Box<Expr>, Box<[Expr]>),
-    Grouped(Box<Expr>),
-    Unary(UnaryOp, Box<Expr>),
-    Binary(BinaryOp, Box<Expr>, Box<Expr>),
+    Variable(Ident<'cx>),
+    FunctionCall(Box<Expr<'cx>>, Box<[Expr<'cx>]>),
+    Grouped(Box<Expr<'cx>>),
+    Unary(UnaryOp, Box<Expr<'cx>>),
+    Binary(BinaryOp, Box<Expr<'cx>>, Box<Expr<'cx>>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -118,8 +118,8 @@ pub enum Fixity {
     Right,
 }
 
-impl Parse for Ident {
-    fn parse(parser: &mut Parser) -> Result<Self, CompileError> {
+impl<'cx> Parse<'cx> for Ident<'cx> {
+    fn parse(parser: &mut Parser<'cx>) -> Result<Self, CompileError> {
         match parser.read() {
             Token::Ident(ident) => Ok(ident),
             _ => Err(CompileError("Expected ident.".into())),
@@ -181,8 +181,8 @@ impl BinaryOp {
     }
 }
 
-impl Expr {
-    fn parse_primary(parser: &mut Parser) -> Result<Self, CompileError> {
+impl<'cx> Expr<'cx> {
+    fn parse_primary(parser: &mut Parser<'cx>) -> Result<Self, CompileError> {
         let token = parser.read();
 
         Ok(match token {
@@ -201,7 +201,7 @@ impl Expr {
         })
     }
 
-    fn parse_primary_func(parser: &mut Parser) -> Result<Self, CompileError> {
+    fn parse_primary_func(parser: &mut Parser<'cx>) -> Result<Self, CompileError> {
         let mut lhs = Expr::parse_primary(parser)?;
 
         while let Token::OpenParen = parser.peek() {
@@ -216,8 +216,8 @@ impl Expr {
     }
 
     fn parse_min_pred(
-        parser: &mut Parser,
-        mut lhs: Expr,
+        parser: &mut Parser<'cx>,
+        mut lhs: Expr<'cx>,
         min_pred: usize,
     ) -> Result<Self, CompileError> {
         // See: https://en.wikipedia.org/wiki/Operator-precedence_parser
@@ -274,8 +274,8 @@ impl Expr {
     }
 }
 
-impl Parse for Expr {
-    fn parse(parser: &mut Parser) -> Result<Self, CompileError> {
+impl<'cx> Parse<'cx> for Expr<'cx> {
+    fn parse(parser: &mut Parser<'cx>) -> Result<Self, CompileError> {
         let primary = Expr::parse_primary_func(parser)?;
 
         Self::parse_min_pred(parser, primary, 0)
@@ -283,26 +283,26 @@ impl Parse for Expr {
 }
 
 #[derive(Clone, Debug)]
-pub enum Stmt {
-    Expr(Expr),
-    Block(Block),
-    Fn(Ident, Rc<FunctionDecl>),
-    Let(Ident, Expr),
-    If(Box<[(Expr, Block)]>, Option<Block>),
-    While(Expr, Block),
+pub enum Stmt<'cx> {
+    Expr(Expr<'cx>),
+    Block(Block<'cx>),
+    Fn(Ident<'cx>, Rc<FunctionDecl<'cx>>),
+    Let(Ident<'cx>, Expr<'cx>),
+    If(Box<[(Expr<'cx>, Block<'cx>)]>, Option<Block<'cx>>),
+    While(Expr<'cx>, Block<'cx>),
     Break,
     Continue,
-    Return(Expr),
+    Return(Expr<'cx>),
 }
 
 #[derive(Clone, Debug)]
-pub struct FunctionDecl {
-    pub parameters: Box<[Ident]>,
-    pub block: Block,
+pub struct FunctionDecl<'cx> {
+    pub parameters: Box<[Ident<'cx>]>,
+    pub block: Block<'cx>,
 }
 
-impl Parse for Stmt {
-    fn parse(parser: &mut Parser) -> Result<Self, CompileError> {
+impl<'cx> Parse<'cx> for Stmt<'cx> {
+    fn parse(parser: &mut Parser<'cx>) -> Result<Self, CompileError> {
         match parser.peek() {
             Token::OpenBrace => Ok(Self::Block(Block::parse(parser)?)),
             Token::Fn => {
@@ -421,10 +421,10 @@ impl Parse for Stmt {
 }
 
 #[derive(Clone, Debug)]
-pub struct Block(pub Box<[Stmt]>);
+pub struct Block<'cx>(pub Box<[Stmt<'cx>]>);
 
-impl Parse for Block {
-    fn parse(parser: &mut Parser) -> Result<Self, CompileError> {
+impl<'cx> Parse<'cx> for Block<'cx> {
+    fn parse(parser: &mut Parser<'cx>) -> Result<Self, CompileError> {
         expect_token!(parser, Token::OpenBrace, "Expected opening brace.");
 
         let mut stmts = vec![];

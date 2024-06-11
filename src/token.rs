@@ -6,9 +6,9 @@ use logos::Logos;
 #[logos(skip r"[ \t\r\n]+")]
 #[logos(skip r"\/\/[^\r\n]*")] // Line comment
 #[logos(skip r"\/\*([^*]|\*[^/])*\*\/")] // Block comment (unnested)
-pub enum Token {
-    #[regex("[a-zA-Z_][a-zA-Z0-9_]*", |lex| Ident(lex.slice().into()), priority = 1)]
-    Ident(Ident),
+pub enum Token<'cx> {
+    #[regex("[a-zA-Z_][a-zA-Z0-9_]*", |lex| Ident(lex.slice()), priority = 1)]
+    Ident(Ident<'cx>),
 
     #[token("null", |_| Literal::Null)]
     #[token("true", |_| Literal::Bool(true))]
@@ -86,9 +86,8 @@ pub enum Token {
     Eof,
 }
 
-// TODO: Make Ident not owned and Copy, e.g. multiple Ident can point to the same memory
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Ident(pub Box<str>);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Ident<'cx>(pub &'cx str);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Literal {

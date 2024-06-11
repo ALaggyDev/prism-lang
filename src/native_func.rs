@@ -1,15 +1,14 @@
-use once_cell::sync::Lazy;
-
 use crate::{
     interpreter::{ControlFlow, Interpreter, NativeFuncPtr, Value},
     token::Ident,
 };
 
-pub fn print(_: &mut Interpreter, values: Vec<Value>) -> Result<Value, ControlFlow> {
+pub fn print<'cx>(
+    _: &mut Interpreter<'cx>,
+    values: Vec<Value<'cx>>,
+) -> Result<Value<'cx>, ControlFlow<'cx>> {
     println!("{:?}", values);
     Ok(Value::Null)
 }
 
-// TODO: Do not use Lazy and Vec!!!!!!!
-pub static NATIVE_FUNCS: Lazy<Vec<(Ident, NativeFuncPtr)>> =
-    Lazy::new(|| vec![(Ident("print".into()), print)]);
+pub static NATIVE_FUNCS: &[(Ident, NativeFuncPtr)] = &[(Ident("print"), print)];

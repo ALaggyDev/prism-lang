@@ -31,7 +31,7 @@ fn stage_1(program: &str) -> Vec<Token> {
     tokens
 }
 
-fn stage_2(tokens: &[Token]) -> Result<Vec<Stmt>, CompileError> {
+fn stage_2<'cx>(tokens: &'cx [Token<'cx>]) -> Result<Vec<Stmt<'cx>>, CompileError> {
     let mut parser = Parser::new(tokens);
 
     let mut stmts = vec![];
@@ -43,11 +43,11 @@ fn stage_2(tokens: &[Token]) -> Result<Vec<Stmt>, CompileError> {
     Ok(stmts)
 }
 
-fn interpret(program: &[Stmt]) -> Result<(), ControlFlow> {
+fn interpret<'cx>(program: &[Stmt<'cx>]) -> Result<(), ControlFlow<'cx>> {
     let mut ins = Interpreter::new();
 
     for (ident, func) in NATIVE_FUNCS.iter() {
-        ins.add_var(ident.clone(), Value::Function(Function::Native(*func)));
+        ins.add_var(*ident, Value::Function(Function::Native(*func)));
     }
 
     for stmt in program {
