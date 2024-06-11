@@ -1,14 +1,14 @@
 // this is a block comment
 /* this is a line comment */
 
-let abc = 0;
+fn win(a) {
+	print(a);
 
-if (abc < 2) {
-	abc = abc + 5;
-	print(abc);
+	fn inner(b) {
+		print(b);
+	}
 
-	let abc = "Some string";
-	print(abc);
+	return inner;
 }
 
-print(abc);
+let func = win(2)(3);

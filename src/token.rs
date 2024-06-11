@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use logos::Logos;
 
 #[derive(Logos, Clone, Debug, PartialEq)]
@@ -10,14 +12,20 @@ pub enum Token {
 
     #[token("fn")]
     Fn,
-    #[token("return")]
-    Return,
     #[token("let")]
     Let,
     #[token("if")]
     If,
     #[token("else")]
     Else,
+    #[token("while")]
+    While,
+    #[token("break")]
+    Break,
+    #[token("continue")]
+    Continue,
+    #[token("return")]
+    Return,
 
     #[token("=")]
     Assign,
@@ -87,5 +95,5 @@ pub enum Literal {
     Null,
     Bool(bool),
     Number(f64),
-    String(Box<str>),
+    String(Rc<str>),
 }

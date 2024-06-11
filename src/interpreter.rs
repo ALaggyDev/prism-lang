@@ -1,13 +1,54 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 use crate::{
-    ast::{BinaryOp, Block, Expr, Stmt, UnaryOp},
+    ast::{BinaryOp, Block, Expr, FunctionDecl, Stmt, UnaryOp},
     token::{Ident, Literal},
 };
 
 #[derive(Clone, Debug)]
+pub enum Value {
+    Null,
+    Bool(bool),
+    Number(f64),
+    String(Rc<str>),
+    Function(Function),
+}
+
+#[derive(Clone, Debug)]
+pub enum Function {
+    Native(NativeFuncPtr),
+    Program(Rc<FunctionDecl>),
+}
+
+pub type NativeFuncPtr =
+    fn(ins: &mut Interpreter, values: Vec<Value>) -> Result<Value, ControlFlow>;
+
+#[derive(Clone, Debug)]
 pub struct Interpreter {
     scopes: Vec<Scope>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ControlFlow {
+    Break,
+    Continue,
+    Return(Value),
+    Error(RuntimeError),
+}
+
+#[derive(Clone, Debug)]
+pub struct RuntimeError(pub Box<str>);
+
+macro_rules! runtime_error {
+    ($msg: expr) => {
+        return Err(ControlFlow::Error(RuntimeError($msg)))
+    };
+}
+
+impl Default for Interpreter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Interpreter {
@@ -17,10 +58,10 @@ impl Interpreter {
         }
     }
 
-    pub fn eval_in_scope(
+    pub fn eval_in_scope<Item>(
         &mut self,
-        func: impl FnOnce(&mut Self) -> Result<Value, RuntimeError>,
-    ) -> Result<Value, RuntimeError> {
+        func: impl FnOnce(&mut Self) -> Result<Item, ControlFlow>,
+    ) -> Result<Item, ControlFlow> {
         self.scopes.push(Scope::new());
 
         let res = func(self);
@@ -42,30 +83,36 @@ impl Interpreter {
         self.get_scope_mut().vars.insert(ident, value);
     }
 
-    pub fn get_var(&self, ident: &Ident) -> Result<&Value, RuntimeError> {
+    pub fn get_var(&self, ident: &Ident) -> Result<&Value, ControlFlow> {
         for scope in self.scopes.iter().rev() {
             if let Some(value) = scope.vars.get(ident) {
                 return Ok(value);
             }
         }
 
-        Err(RuntimeError("Variable not defined.".into()))
+        runtime_error!("Variable not defined.".into())
     }
 
-    pub fn get_var_mut(&mut self, ident: &Ident) -> Result<&mut Value, RuntimeError> {
+    pub fn get_var_mut(&mut self, ident: &Ident) -> Result<&mut Value, ControlFlow> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(value) = scope.vars.get_mut(ident) {
                 return Ok(value);
             }
         }
 
-        Err(RuntimeError("Variable not defined.".into()))
+        runtime_error!("Variable not defined.".into())
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct Scope {
     vars: HashMap<Ident, Value>,
+}
+
+impl Default for Scope {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Scope {
@@ -76,20 +123,10 @@ impl Scope {
     }
 }
 
-// TODO: Wrap Rc on Value to avoid cloning
-#[derive(Clone, Debug)]
-pub enum Value {
-    Null,
-    Bool(bool),
-    Number(f64),
-    String(Box<str>),
-}
-
-#[derive(Clone, Debug)]
-pub struct RuntimeError(pub Box<str>);
-
 pub trait Evalulate: Sized {
-    fn evalulate(&self, ins: &mut Interpreter) -> Result<Value, RuntimeError>;
+    type Item;
+
+    fn evalulate(&self, ins: &mut Interpreter) -> Result<Self::Item, ControlFlow>;
 }
 
 impl Value {
@@ -99,6 +136,7 @@ impl Value {
             Value::Bool(val) => *val,
             Value::Number(val) => *val != 0.0 && !(*val).is_nan(),
             Value::String(val) => !(*val).is_empty(),
+            Value::Function(_) => true,
         }
     }
 
@@ -109,19 +147,27 @@ impl Value {
             (Value::Bool(val_1), Value::Bool(val_2)) => val_1 == val_2,
             (Value::Number(val_1), Value::Number(val_2)) => val_1 == val_2,
             (Value::String(val_1), Value::String(val_2)) => val_1 == val_2,
+            (
+                Value::Function(Function::Native(func_1)),
+                Value::Function(Function::Native(func_2)),
+            ) => func_1.eq(func_2),
+            (
+                Value::Function(Function::Program(func_1)),
+                Value::Function(Function::Program(func_2)),
+            ) => Rc::ptr_eq(func_1, func_2),
             _ => false,
         }
     }
 }
 
 impl UnaryOp {
-    fn evalulate_op(&self, ins: &mut Interpreter, op1: &Expr) -> Result<Value, RuntimeError> {
+    fn evalulate_op(&self, ins: &mut Interpreter, op1: &Expr) -> Result<Value, ControlFlow> {
         let op1 = op1.evalulate(ins)?;
 
         match self {
-            UnaryOp::Negation => match op1 {
+            UnaryOp::Negate => match op1 {
                 Value::Number(val) => Ok(Value::Number(-val)),
-                _ => Err(RuntimeError("Negation requires number.".into())),
+                _ => runtime_error!("Negation requires number.".into()),
             },
             UnaryOp::Not => Ok(Value::Bool(!op1.is_truthy())),
         }
@@ -134,15 +180,13 @@ impl BinaryOp {
         ins: &mut Interpreter,
         op1: &Expr,
         op2: &Expr,
-    ) -> Result<Value, RuntimeError> {
+    ) -> Result<Value, ControlFlow> {
         // Assignment have special treatment
         if let BinaryOp::Assign = self {
             // We might need to handle this properly in the future (i.e. l-values), for now this will work
 
             let Expr::Variable(ident) = op1 else {
-                return Err(RuntimeError(
-                    "Ident expected on left hand side of assignment.".into(),
-                ));
+                runtime_error!("Ident expected on left hand side of assignment.".into())
             };
 
             let val = op2.evalulate(ins)?;
@@ -165,10 +209,10 @@ impl BinaryOp {
             | BinaryOp::GreaterOrEqual
             | BinaryOp::LessOrEqual => {
                 let Value::Number(val_1) = op1 else {
-                    return Err(RuntimeError("Expected number.".into()));
+                    runtime_error!("Expected number.".into())
                 };
                 let Value::Number(val_2) = op2 else {
-                    return Err(RuntimeError("Expected number.".into()));
+                    runtime_error!("Expected number.".into())
                 };
 
                 match self {
@@ -194,22 +238,57 @@ impl BinaryOp {
 }
 
 impl Evalulate for Expr {
-    fn evalulate(&self, ins: &mut Interpreter) -> Result<Value, RuntimeError> {
+    type Item = Value;
+
+    fn evalulate(&self, ins: &mut Interpreter) -> Result<Self::Item, ControlFlow> {
         Ok(match self {
             Expr::Literal(val) => match val {
                 Literal::Null => Value::Null,
                 Literal::Bool(val) => Value::Bool(*val),
                 Literal::Number(val) => Value::Number(*val),
-                Literal::String(val) => Value::String(val.clone()), // TODO: Don't use clone
+                Literal::String(val) => Value::String(Rc::clone(val)),
             },
             Expr::Variable(ident) => ins.get_var(ident)?.clone(),
-            Expr::FunctionCall(ident, expr) => {
-                // TODO: REMOVE THIS
-                if &*ident.0 == "print" {
-                    println!("{:?}", (expr[0]).evalulate(ins)?);
-                    Value::Null
-                } else {
-                    todo!()
+            Expr::FunctionCall(func_expr, exprs) => {
+                let Value::Function(func) = func_expr.evalulate(ins)? else {
+                    runtime_error!("Expected function.".into())
+                };
+
+                let mut values = Vec::with_capacity(exprs.len());
+                for expr in exprs.iter() {
+                    values.push(expr.evalulate(ins)?);
+                }
+
+                match func {
+                    Function::Native(func) => {
+                        // It shouldn't be necessary to create a scope before calling a native function?
+                        func(ins, values)?
+                    }
+                    Function::Program(func) => {
+                        let mut values = values.into_iter();
+
+                        ins.eval_in_scope(|ins| {
+                            for i in 0..func.parameters.len() {
+                                ins.add_var(
+                                    func.parameters[i].clone(),
+                                    values.next().unwrap_or(Value::Null),
+                                );
+                            }
+
+                            let res = func.block.evalulate(ins);
+                            match res {
+                                Err(ControlFlow::Return(ret_val)) => return Ok(ret_val),
+                                Err(ControlFlow::Break | ControlFlow::Continue) => {
+                                    // Technically this should be compile error
+                                    runtime_error!("Invalid control flow outside loop.".into())
+                                }
+                                _ => res?,
+                            }
+
+                            // TODO: Return
+                            Ok(Value::Null)
+                        })?
+                    }
                 }
             }
             Expr::Grouped(expr) => expr.evalulate(ins)?,
@@ -220,7 +299,9 @@ impl Evalulate for Expr {
 }
 
 impl Evalulate for Stmt {
-    fn evalulate(&self, ins: &mut Interpreter) -> Result<Value, RuntimeError> {
+    type Item = ();
+
+    fn evalulate(&self, ins: &mut Interpreter) -> Result<Self::Item, ControlFlow> {
         match self {
             Stmt::Expr(expr) => {
                 expr.evalulate(ins)?;
@@ -228,8 +309,12 @@ impl Evalulate for Stmt {
             Stmt::Block(block) => {
                 block.evalulate(ins)?;
             }
-            Stmt::Fn(_, _, _) => todo!(),
-            Stmt::Return(_) => todo!(),
+            Stmt::Fn(ident, func) => {
+                ins.add_var(
+                    ident.clone(),
+                    Value::Function(Function::Program(Rc::clone(func))),
+                );
+            }
             Stmt::Let(ident, expr) => {
                 let val = expr.evalulate(ins)?;
                 ins.add_var(ident.clone(), val);
@@ -246,20 +331,35 @@ impl Evalulate for Stmt {
                     else_branch.evalulate(ins)?;
                 }
             }
+            Stmt::While(expr, block) => {
+                while expr.evalulate(ins)?.is_truthy() {
+                    let res = block.evalulate(ins);
+                    match res {
+                        Err(ControlFlow::Break) => break,
+                        Err(ControlFlow::Continue) => continue,
+                        _ => res?,
+                    }
+                }
+            }
+            Stmt::Break => return Err(ControlFlow::Break),
+            Stmt::Continue => return Err(ControlFlow::Continue),
+            Stmt::Return(expr) => return Err(ControlFlow::Return(expr.evalulate(ins)?)),
         };
 
-        Ok(Value::Null)
+        Ok(())
     }
 }
 
 impl Evalulate for Block {
-    fn evalulate(&self, ins: &mut Interpreter) -> Result<Value, RuntimeError> {
+    type Item = ();
+
+    fn evalulate(&self, ins: &mut Interpreter) -> Result<Self::Item, ControlFlow> {
         ins.eval_in_scope(|ins| {
             for stmt in self.0.iter() {
                 stmt.evalulate(ins)?;
             }
 
-            Ok(Value::Null)
+            Ok(())
         })
     }
 }

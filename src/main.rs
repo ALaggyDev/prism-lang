@@ -1,10 +1,12 @@
 use ast::{Parse, Parser, Stmt};
-use interpreter::{Evalulate, Interpreter, RuntimeError};
+use interpreter::{ControlFlow, Evalulate, Function, Interpreter, Value};
 use logos::Logos;
+use native_func::NATIVE_FUNCS;
 use token::Token;
 
 pub mod ast;
 pub mod interpreter;
+pub mod native_func;
 pub mod token;
 
 fn stage_1(program: &str) -> Vec<Token> {
@@ -41,8 +43,12 @@ fn stage_2(tokens: &[Token]) -> Vec<Stmt> {
     stmts
 }
 
-fn interpret(program: &[Stmt]) -> Result<(), RuntimeError> {
+fn interpret(program: &[Stmt]) -> Result<(), ControlFlow> {
     let mut ins = Interpreter::new();
+
+    for (ident, func) in NATIVE_FUNCS.iter() {
+        ins.add_var(ident.clone(), Value::Function(Function::Native(*func)));
+    }
 
     for stmt in program {
         stmt.evalulate(&mut ins)?;
