@@ -10,6 +10,15 @@ pub enum Token {
     #[regex("[a-zA-Z_][a-zA-Z0-9_]*", |lex| Ident(lex.slice().into()), priority = 1)]
     Ident(Ident),
 
+    #[token("null", |_| Literal::Null)]
+    #[token("true", |_| Literal::Bool(true))]
+    #[token("false", |_| Literal::Bool(false))]
+    #[token("Infinity", |_| Literal::Number(f64::INFINITY))]
+    #[token("NaN", |_| Literal::Number(f64::NAN))]
+    #[regex(r"([0-9]*\.)?[0-9]+([eE][+-]?[0-9]+)?", |lex| Literal::Number(lex.slice().parse::<f64>().unwrap()))]
+    #[regex(r#""[^"\r\n]*""#, |lex| Literal::String(lex.slice()[1..lex.slice().len() - 1].into()))]
+    Literal(Literal),
+
     #[token("fn")]
     Fn,
     #[token("let")]
@@ -73,15 +82,6 @@ pub enum Token {
     Or,
     #[token("!")]
     Not,
-
-    #[token("null", |_| Literal::Null)]
-    #[token("true", |_| Literal::Bool(true))]
-    #[token("false", |_| Literal::Bool(false))]
-    #[token("Infinity", |_| Literal::Number(f64::INFINITY))]
-    #[token("NaN", |_| Literal::Number(f64::NAN))]
-    #[regex(r"([0-9]*\.)?[0-9]+([eE][+-]?[0-9]+)?", |lex| Literal::Number(lex.slice().parse::<f64>().unwrap()))]
-    #[regex(r#""[^"\r\n]*""#, |lex| Literal::String(lex.slice()[1..lex.slice().len() - 1].into()))]
-    Literal(Literal),
 
     Eof,
 }

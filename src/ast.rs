@@ -7,6 +7,9 @@ pub struct Parser<'a> {
     rem: &'a [Token],
 }
 
+#[derive(Clone, Debug)]
+pub struct CompileError(pub Box<str>);
+
 impl<'a> Parser<'a> {
     pub fn new(tokens: &'a [Token]) -> Self {
         Self { rem: tokens }
@@ -38,15 +41,15 @@ impl<'a> Parser<'a> {
 }
 
 macro_rules! expect_token {
-    ($parser: expr, $pat: pat, $($arg:tt)*) => {
+    ($parser: expr, $pat: pat, $msg: literal) => {
         let $pat = $parser.read() else {
-            panic!($($arg)*);
+            return Err(CompileError($msg.into()));
         };
     };
 }
 
 pub trait Parse: Sized {
-    fn parse(parser: &mut Parser) -> Self;
+    fn parse(parser: &mut Parser) -> Result<Self, CompileError>;
 }
 
 #[derive(Clone, Debug)]
@@ -90,6 +93,15 @@ pub enum Fixity {
     Left,
     // Reft-associative
     Right,
+}
+
+impl Parse for Ident {
+    fn parse(parser: &mut Parser) -> Result<Self, CompileError> {
+        match parser.read() {
+            Token::Ident(ident) => Ok(ident),
+            _ => Err(CompileError("Expected ident.".into())),
+        }
+    }
 }
 
 impl BinaryOp {
@@ -147,27 +159,27 @@ impl BinaryOp {
 }
 
 impl Expr {
-    fn parse_primary(parser: &mut Parser) -> Expr {
+    fn parse_primary(parser: &mut Parser) -> Result<Self, CompileError> {
         let token = parser.read();
 
-        match token {
+        Ok(match token {
             Token::Literal(literal) => Expr::Literal(literal),
             Token::OpenParen => {
-                let expr = Expr::parse(parser);
+                let expr = Expr::parse(parser)?;
                 expect_token!(parser, Token::CloseParen, "Expected closing paraenesis.");
                 Expr::Grouped(expr.into())
             }
             Token::Minus => {
-                Expr::Unary(UnaryOp::Negate, Box::new(Expr::parse_primary_func(parser)))
+                Expr::Unary(UnaryOp::Negate, Box::new(Expr::parse_primary_func(parser)?))
             }
-            Token::Not => Expr::Unary(UnaryOp::Not, Box::new(Expr::parse_primary_func(parser))),
+            Token::Not => Expr::Unary(UnaryOp::Not, Box::new(Expr::parse_primary_func(parser)?)),
             Token::Ident(ident) => Expr::Variable(ident),
-            _ => panic!("Unexpected token."),
-        }
+            _ => return Err(CompileError("Unexpected token.".into())),
+        })
     }
 
-    fn parse_primary_func(parser: &mut Parser) -> Expr {
-        let mut lhs = Expr::parse_primary(parser);
+    fn parse_primary_func(parser: &mut Parser) -> Result<Self, CompileError> {
+        let mut lhs = Expr::parse_primary(parser)?;
 
         while let Token::OpenParen = parser.peek() {
             parser.advance();
@@ -175,27 +187,27 @@ impl Expr {
             let mut exprs = vec![];
 
             loop {
-                exprs.push(Expr::parse(parser));
+                exprs.push(Expr::parse(parser)?);
 
                 match parser.read() {
                     Token::Comma => {}
                     Token::CloseParen => break,
-                    Token::Eof => {
-                        panic!("Unexpected eof.");
-                    }
-                    _ => {
-                        panic!("Expected comma or closing paraenesis.");
-                    }
+                    Token::Eof => return Err(CompileError("Unexpected eof.".into())),
+                    _ => return Err(CompileError("Expected comma or closing paraenesis.".into())),
                 }
             }
 
             lhs = Expr::FunctionCall(lhs.into(), exprs.into());
         }
 
-        lhs
+        Ok(lhs)
     }
 
-    fn parse_min_pred(parser: &mut Parser, mut lhs: Expr, min_pred: usize) -> Expr {
+    fn parse_min_pred(
+        parser: &mut Parser,
+        mut lhs: Expr,
+        min_pred: usize,
+    ) -> Result<Self, CompileError> {
         // See: https://en.wikipedia.org/wiki/Operator-precedence_parser
 
         // parse_expression()
@@ -224,7 +236,7 @@ impl Expr {
 
             parser.advance();
 
-            let mut rhs = Expr::parse_primary_func(parser);
+            let mut rhs = Expr::parse_primary_func(parser)?;
 
             lookahead = parser.peek().clone();
 
@@ -239,20 +251,20 @@ impl Expr {
                     parser,
                     rhs,
                     op1.precedence() + (op2.precedence() > op1.precedence()) as usize,
-                );
+                )?;
                 lookahead = parser.peek().clone();
             }
 
             lhs = Expr::Binary(op1, Box::new(lhs), Box::new(rhs));
         }
 
-        lhs
+        Ok(lhs)
     }
 }
 
 impl Parse for Expr {
-    fn parse(parser: &mut Parser) -> Expr {
-        let primary = Expr::parse_primary_func(parser);
+    fn parse(parser: &mut Parser) -> Result<Self, CompileError> {
+        let primary = Expr::parse_primary_func(parser)?;
 
         Self::parse_min_pred(parser, primary, 0)
     }
@@ -278,20 +290,20 @@ pub struct FunctionDecl {
 }
 
 impl Parse for Stmt {
-    fn parse(parser: &mut Parser) -> Self {
+    fn parse(parser: &mut Parser) -> Result<Self, CompileError> {
         match parser.peek() {
-            Token::OpenBrace => Self::Block(Block::parse(parser)),
+            Token::OpenBrace => Ok(Self::Block(Block::parse(parser)?)),
             Token::Fn => {
                 parser.advance();
 
-                expect_token!(parser, Token::Ident(ident), "Expected ident.");
+                let ident = Ident::parse(parser)?;
 
                 expect_token!(parser, Token::OpenParen, "Expected opening paraenesis.");
 
                 let mut parameters = Vec::new();
 
                 loop {
-                    expect_token!(parser, Token::Ident(ident), "Expected ident.");
+                    let ident = Ident::parse(parser)?;
 
                     parameters.push(ident);
 
@@ -302,27 +314,27 @@ impl Parse for Stmt {
                     }
                 }
 
-                let block = Block::parse(parser);
+                let block = Block::parse(parser)?;
 
-                Self::Fn(
+                Ok(Self::Fn(
                     ident,
                     Rc::new(FunctionDecl {
                         parameters: parameters.into(),
                         block,
                     }),
-                )
+                ))
             }
             Token::Let => {
                 parser.advance();
 
-                expect_token!(parser, Token::Ident(ident), "Expected ident.");
+                let ident = Ident::parse(parser)?;
                 expect_token!(parser, Token::Assign, "Expected assignment.");
 
-                let expr = Expr::parse(parser);
+                let expr = Expr::parse(parser)?;
 
                 expect_token!(parser, Token::Semicolon, "Expected semicolon.");
 
-                Self::Let(ident, expr)
+                Ok(Self::Let(ident, expr))
             }
             Token::If => {
                 parser.advance();
@@ -333,11 +345,11 @@ impl Parse for Stmt {
                 loop {
                     expect_token!(parser, Token::OpenParen, "Expected opening paraenesis.");
 
-                    let expr = Expr::parse(parser);
+                    let expr = Expr::parse(parser)?;
 
                     expect_token!(parser, Token::CloseParen, "Expected closing paraenesis.");
 
-                    let block = Block::parse(parser);
+                    let block = Block::parse(parser)?;
 
                     branches.push((expr, block));
 
@@ -349,60 +361,60 @@ impl Parse for Stmt {
                                 parser.advance();
                             }
                             Token::OpenBrace => {
-                                else_branch = Some(Block::parse(parser));
+                                else_branch = Some(Block::parse(parser)?);
                                 break;
                             }
-                            _ => panic!("Expected if or opening brace."),
+                            _ => return Err(CompileError("Expected if or opening brace.".into())),
                         }
                     } else {
                         break;
                     }
                 }
 
-                Self::If(branches.into(), else_branch)
+                Ok(Self::If(branches.into(), else_branch))
             }
             Token::While => {
                 parser.advance();
 
                 expect_token!(parser, Token::OpenParen, "Expected opening paraenesis.");
 
-                let expr = Expr::parse(parser);
+                let expr = Expr::parse(parser)?;
 
                 expect_token!(parser, Token::CloseParen, "Expected closing paraenesis.");
 
-                let block = Block::parse(parser);
+                let block = Block::parse(parser)?;
 
-                Self::While(expr, block)
+                Ok(Self::While(expr, block))
             }
             Token::Break => {
                 parser.advance();
 
                 expect_token!(parser, Token::Semicolon, "Expected semicolon.");
 
-                Self::Break
+                Ok(Self::Break)
             }
             Token::Continue => {
                 parser.advance();
 
                 expect_token!(parser, Token::Semicolon, "Expected semicolon.");
 
-                Self::Continue
+                Ok(Self::Continue)
             }
             Token::Return => {
                 parser.advance();
 
-                let expr = Expr::parse(parser);
+                let expr = Expr::parse(parser)?;
 
                 expect_token!(parser, Token::Semicolon, "Expected semicolon.");
 
-                Self::Return(expr)
+                Ok(Self::Return(expr))
             }
             _ => {
-                let expr = Expr::parse(parser);
+                let expr = Expr::parse(parser)?;
 
                 expect_token!(parser, Token::Semicolon, "Expected semicolon.");
 
-                Self::Expr(expr)
+                Ok(Self::Expr(expr))
             }
         }
     }
@@ -412,7 +424,7 @@ impl Parse for Stmt {
 pub struct Block(pub Box<[Stmt]>);
 
 impl Parse for Block {
-    fn parse(parser: &mut Parser) -> Self {
+    fn parse(parser: &mut Parser) -> Result<Self, CompileError> {
         expect_token!(parser, Token::OpenBrace, "Expected opening brace.");
 
         let mut stmts = vec![];
@@ -423,9 +435,9 @@ impl Parse for Block {
                 break;
             };
 
-            stmts.push(Stmt::parse(parser));
+            stmts.push(Stmt::parse(parser)?);
         }
 
-        Self(stmts.into())
+        Ok(Self(stmts.into()))
     }
 }

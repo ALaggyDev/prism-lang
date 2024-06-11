@@ -1,4 +1,4 @@
-use ast::{Parse, Parser, Stmt};
+use ast::{CompileError, Parse, Parser, Stmt};
 use interpreter::{ControlFlow, Evalulate, Function, Interpreter, Value};
 use logos::Logos;
 use native_func::NATIVE_FUNCS;
@@ -31,16 +31,16 @@ fn stage_1(program: &str) -> Vec<Token> {
     tokens
 }
 
-fn stage_2(tokens: &[Token]) -> Vec<Stmt> {
+fn stage_2(tokens: &[Token]) -> Result<Vec<Stmt>, CompileError> {
     let mut parser = Parser::new(tokens);
 
     let mut stmts = vec![];
 
     while !parser.is_at_end() {
-        stmts.push(Stmt::parse(&mut parser));
+        stmts.push(Stmt::parse(&mut parser)?);
     }
 
-    stmts
+    Ok(stmts)
 }
 
 fn interpret(program: &[Stmt]) -> Result<(), ControlFlow> {
@@ -61,7 +61,7 @@ fn main() {
     println!("Prism!");
 
     let tokens = stage_1(include_str!("./test.prism"));
-    let program = stage_2(&tokens);
+    let program = stage_2(&tokens).unwrap();
 
     let res = interpret(&program);
     println!("{:?}", res);
