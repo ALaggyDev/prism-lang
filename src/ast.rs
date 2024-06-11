@@ -48,6 +48,29 @@ macro_rules! expect_token {
     };
 }
 
+macro_rules! read_vec {
+    ($parser: expr, $item_fn: expr, $is_sep: pat, $is_delim: pat) => {{
+        let mut items = Vec::new();
+
+        if let $is_delim = $parser.peek() {
+            $parser.advance();
+        } else {
+            loop {
+                let item = $item_fn($parser)?;
+                items.push(item);
+
+                match $parser.read() {
+                    $is_sep => {}
+                    $is_delim => break,
+                    _ => return Err(CompileError("Unexpected token.".into())),
+                }
+            }
+        }
+
+        items
+    }};
+}
+
 pub trait Parse: Sized {
     fn parse(parser: &mut Parser) -> Result<Self, CompileError>;
 }
@@ -184,18 +207,7 @@ impl Expr {
         while let Token::OpenParen = parser.peek() {
             parser.advance();
 
-            let mut exprs = vec![];
-
-            loop {
-                exprs.push(Expr::parse(parser)?);
-
-                match parser.read() {
-                    Token::Comma => {}
-                    Token::CloseParen => break,
-                    Token::Eof => return Err(CompileError("Unexpected eof.".into())),
-                    _ => return Err(CompileError("Expected comma or closing paraenesis.".into())),
-                }
-            }
+            let exprs = read_vec!(parser, Expr::parse, Token::Comma, Token::CloseParen);
 
             lhs = Expr::FunctionCall(lhs.into(), exprs.into());
         }
@@ -300,19 +312,7 @@ impl Parse for Stmt {
 
                 expect_token!(parser, Token::OpenParen, "Expected opening paraenesis.");
 
-                let mut parameters = Vec::new();
-
-                loop {
-                    let ident = Ident::parse(parser)?;
-
-                    parameters.push(ident);
-
-                    match parser.read() {
-                        Token::Comma => {}
-                        Token::CloseParen => break,
-                        _ => todo!("Expected comma or closing paraenesis."),
-                    }
-                }
+                let parameters = read_vec!(parser, Ident::parse, Token::Comma, Token::CloseParen);
 
                 let block = Block::parse(parser)?;
 

@@ -4,11 +4,11 @@
 fn win(a) {
 	print(a);
 
-	fn inner(b) {
-		print(b);
+	fn inner() {
+		print();
 	}
 
 	return inner;
 }
 
-let func = win(2)(3);
+let func = win(2)();
