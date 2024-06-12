@@ -12,7 +12,7 @@ pub struct CompileError(pub Box<str>);
 
 impl<'cx> Parser<'cx> {
     pub fn new(tokens: &'cx [Token<'cx>]) -> Self {
-        Self { rem: tokens}
+        Self { rem: tokens }
     }
 
     pub fn advance(&mut self) {
@@ -183,33 +183,35 @@ impl BinaryOp {
 
 impl<'cx> Expr<'cx> {
     fn parse_primary(parser: &mut Parser<'cx>) -> Result<Self, CompileError> {
+        // Left operators
         let token = parser.read();
 
-        Ok(match token {
+        let mut lhs = match token {
             Token::Literal(literal) => Expr::Literal(literal),
             Token::OpenParen => {
                 let expr = Expr::parse(parser)?;
                 expect_token!(parser, Token::CloseParen, "Expected closing paraenesis.");
                 Expr::Grouped(expr.into())
             }
-            Token::Minus => {
-                Expr::Unary(UnaryOp::Negate, Box::new(Expr::parse_primary_func(parser)?))
-            }
-            Token::Not => Expr::Unary(UnaryOp::Not, Box::new(Expr::parse_primary_func(parser)?)),
+            Token::Minus => Expr::Unary(UnaryOp::Negate, Box::new(Expr::parse_primary(parser)?)),
+            Token::Not => Expr::Unary(UnaryOp::Not, Box::new(Expr::parse_primary(parser)?)),
             Token::Ident(ident) => Expr::Variable(ident),
             _ => return Err(CompileError("Unexpected token.".into())),
-        })
-    }
+        };
 
-    fn parse_primary_func(parser: &mut Parser<'cx>) -> Result<Self, CompileError> {
-        let mut lhs = Expr::parse_primary(parser)?;
+        // Right operators
 
-        while let Token::OpenParen = parser.peek() {
-            parser.advance();
+        loop {
+            match parser.peek() {
+                Token::OpenParen => {
+                    parser.advance();
 
-            let exprs = read_vec!(parser, Expr::parse, Token::Comma, Token::CloseParen);
+                    let exprs = read_vec!(parser, Expr::parse, Token::Comma, Token::CloseParen);
 
-            lhs = Expr::FunctionCall(lhs.into(), exprs.into());
+                    lhs = Expr::FunctionCall(lhs.into(), exprs.into());
+                }
+                _ => break,
+            }
         }
 
         Ok(lhs)
@@ -248,7 +250,7 @@ impl<'cx> Expr<'cx> {
 
             parser.advance();
 
-            let mut rhs = Expr::parse_primary_func(parser)?;
+            let mut rhs = Expr::parse_primary(parser)?;
 
             lookahead = parser.peek().clone();
 
@@ -276,7 +278,7 @@ impl<'cx> Expr<'cx> {
 
 impl<'cx> Parse<'cx> for Expr<'cx> {
     fn parse(parser: &mut Parser<'cx>) -> Result<Self, CompileError> {
-        let primary = Expr::parse_primary_func(parser)?;
+        let primary = Expr::parse_primary(parser)?;
 
         Self::parse_min_pred(parser, primary, 0)
     }
