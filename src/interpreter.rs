@@ -5,21 +5,24 @@ use crate::{
     token::{Ident, Literal},
 };
 
+// TODO: Use a GC! Value<'cx> creates a reference loop and will never dealloc
+
 #[derive(Clone, Debug)]
 pub enum Value<'cx> {
     Null,
     Bool(bool),
     Number(f64),
     String(Rc<str>),
-    Function(Function<'cx>),
+    Callable(Callable<'cx>),
     Class(Rc<ClassDecl<'cx>>),
-    Object(Rc<RefCell<Object<'cx>>>), // TODO: Use a GC
+    Object(Rc<RefCell<Object<'cx>>>),
 }
 
-#[derive(Clone, Debug)]
-pub enum Function<'cx> {
+#[derive(Clone)]
+pub enum Callable<'cx> {
     Native(NativeFuncPtr),
-    Program(Rc<FunctionDecl<'cx>>),
+    Function(Rc<FunctionDecl<'cx>>),
+    Method(Box<(Value<'cx>, Rc<FunctionDecl<'cx>>)>),
 }
 
 pub type NativeFuncPtr = for<'cx> fn(
@@ -106,10 +109,21 @@ impl<'cx> Interpreter<'cx> {
 
         runtime_error!("Variable not defined.".into())
     }
+
+    pub fn get_this(&self) -> Result<Value<'cx>, ControlFlow<'cx>> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(this) = &scope.this {
+                return Ok(this.clone());
+            }
+        }
+
+        runtime_error!("Keyword `this` is not set.".into());
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct Scope<'cx> {
+    this: Option<Value<'cx>>,
     vars: HashMap<Ident<'cx>, Value<'cx>>,
 }
 
@@ -122,6 +136,7 @@ impl<'cx> Default for Scope<'cx> {
 impl<'cx> Scope<'cx> {
     pub fn new() -> Self {
         Self {
+            this: None,
             vars: HashMap::new(),
         }
     }
@@ -146,7 +161,7 @@ impl<'cx> Value<'cx> {
             Value::Bool(val) => *val,
             Value::Number(val) => *val != 0.0 && !(*val).is_nan(),
             Value::String(val) => !(*val).is_empty(),
-            Value::Function(_) => true,
+            Value::Callable(_) => true,
             Value::Class(_) => true,
             Value::Object(_) => true,
         }
@@ -160,12 +175,12 @@ impl<'cx> Value<'cx> {
             (Value::Number(val_1), Value::Number(val_2)) => val_1 == val_2,
             (Value::String(val_1), Value::String(val_2)) => val_1 == val_2,
             (
-                Value::Function(Function::Native(func_1)),
-                Value::Function(Function::Native(func_2)),
+                Value::Callable(Callable::Native(func_1)),
+                Value::Callable(Callable::Native(func_2)),
             ) => func_1.eq(func_2),
             (
-                Value::Function(Function::Program(func_1)),
-                Value::Function(Function::Program(func_2)),
+                Value::Callable(Callable::Function(func_1)),
+                Value::Callable(Callable::Function(func_2)),
             ) => Rc::ptr_eq(func_1, func_2),
             (Value::Class(class_1), Value::Class(class_2)) => Rc::ptr_eq(class_1, class_2),
             (Value::Object(obj_1), Value::Object(obj_2)) => Rc::ptr_eq(obj_1, obj_2),
@@ -264,6 +279,37 @@ impl<'cx> BinaryOp {
     }
 }
 
+fn eval_fn<'cx>(
+    ins: &mut Interpreter<'cx>,
+    func: &FunctionDecl<'cx>,
+    values: Vec<Value<'cx>>,
+    extra_fn: impl FnOnce(&mut Interpreter<'cx>),
+) -> Result<Value<'cx>, ControlFlow<'cx>> {
+    let mut values = values.into_iter();
+
+    ins.eval_in_scope(|ins| {
+        extra_fn(ins);
+
+        // Bind parameters
+        for i in 0..func.parameters.len() {
+            ins.add_var(func.parameters[i], values.next().unwrap_or(Value::Null));
+        }
+
+        let res = func.block.evalulate(ins);
+        match res {
+            Err(ControlFlow::Return(ret_val)) => return Ok(ret_val),
+            Err(ControlFlow::Break | ControlFlow::Continue) => {
+                // Technically this should be compile error
+                runtime_error!("Invalid control flow outside loop.".into())
+            }
+            _ => res?,
+        }
+
+        // TODO: Return
+        Ok(Value::Null)
+    })
+}
+
 impl<'cx> Evalulate<'cx> for Expr<'cx> {
     type Item = Value<'cx>;
 
@@ -276,57 +322,55 @@ impl<'cx> Evalulate<'cx> for Expr<'cx> {
                 Literal::String(val) => Value::String(Rc::clone(val)),
             },
             Expr::Variable(ident) => ins.get_var(*ident)?.clone(),
-            Expr::FunctionCall(func_expr, exprs) => {
-                match func_expr.evalulate(ins)? {
+            Expr::FunctionCall(call_expr, exprs) => {
+                match call_expr.evalulate(ins)? {
                     // Function
-                    Value::Function(func) => {
+                    Value::Callable(callable) => {
                         let mut values = Vec::with_capacity(exprs.len());
                         for expr in exprs.iter() {
                             values.push(expr.evalulate(ins)?);
                         }
 
-                        match func {
-                            Function::Native(func) => {
+                        match callable {
+                            Callable::Native(func) => {
                                 // It shouldn't be necessary to create a scope before calling a native function?
                                 func(ins, values)?
                             }
-                            Function::Program(func) => {
-                                let mut values = values.into_iter();
-
-                                ins.eval_in_scope(|ins| {
-                                    for i in 0..func.parameters.len() {
-                                        ins.add_var(
-                                            func.parameters[i],
-                                            values.next().unwrap_or(Value::Null),
-                                        );
-                                    }
-
-                                    let res = func.block.evalulate(ins);
-                                    match res {
-                                        Err(ControlFlow::Return(ret_val)) => return Ok(ret_val),
-                                        Err(ControlFlow::Break | ControlFlow::Continue) => {
-                                            // Technically this should be compile error
-                                            runtime_error!(
-                                                "Invalid control flow outside loop.".into()
-                                            )
-                                        }
-                                        _ => res?,
-                                    }
-
-                                    // TODO: Return
-                                    Ok(Value::Null)
-                                })?
-                            }
+                            Callable::Function(func) => eval_fn(ins, &func, values, |_| {})?,
+                            Callable::Method(method) => eval_fn(ins, &method.1, values, |ins| {
+                                ins.get_scope_mut().this = Some(method.0.clone());
+                            })?,
                         }
                     }
                     // Class
                     Value::Class(class) => {
-                        let obj = Object {
-                            class,
+                        let obj = Rc::new(RefCell::new(Object {
+                            class: Rc::clone(&class),
                             fields: HashMap::new(),
-                        };
+                        }));
 
-                        Value::Object(Rc::new(RefCell::new(obj)))
+                        // Bind methods
+                        for method in class.methods.iter() {
+                            obj.borrow_mut().fields.insert(
+                                method.0,
+                                Value::Callable(Callable::Method(Box::new((
+                                    Value::Object(obj.clone()),
+                                    Rc::clone(&method.1),
+                                )))),
+                            );
+                        }
+
+                        // Call initializer
+                        for method in class.methods.iter() {
+                            if method.0 .0 == "__init__" {
+                                eval_fn(ins, &method.1, Vec::new(), |ins| {
+                                    ins.get_scope_mut().this = Some(Value::Object(obj.clone()));
+                                })?;
+                                break;
+                            }
+                        }
+
+                        Value::Object(obj)
                     }
                     _ => runtime_error!("Invalid function call.".into()),
                 }
@@ -346,6 +390,7 @@ impl<'cx> Evalulate<'cx> for Expr<'cx> {
 
                 val.clone()
             }
+            Expr::This => ins.get_this()?,
         })
     }
 }
@@ -362,7 +407,7 @@ impl<'cx> Evalulate<'cx> for Stmt<'cx> {
                 block.evalulate(ins)?;
             }
             Stmt::Fn(ident, func) => {
-                ins.add_var(*ident, Value::Function(Function::Program(Rc::clone(func))));
+                ins.add_var(*ident, Value::Callable(Callable::Function(Rc::clone(func))));
             }
             Stmt::Let(ident, expr) => {
                 let val = expr.evalulate(ins)?;
@@ -413,5 +458,16 @@ impl<'cx> Evalulate<'cx> for Block<'cx> {
 
             Ok(())
         })
+    }
+}
+
+// Temp hack to stop println!() from entering a loop
+impl<'cx> std::fmt::Debug for Callable<'cx> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Callable::Native(f0) => f.debug_tuple("Native").field(&f0).finish(),
+            Callable::Function(f0) => f.debug_tuple("Function").field(&f0).finish(),
+            Callable::Method(f0) => f.debug_tuple("Method").field(&f0.1).finish(),
+        }
     }
 }

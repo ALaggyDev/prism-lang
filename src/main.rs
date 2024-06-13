@@ -1,5 +1,5 @@
 use ast::{CompileError, Parse, Parser, Stmt};
-use interpreter::{ControlFlow, Evalulate, Function, Interpreter, Value};
+use interpreter::{ControlFlow, Evalulate, Callable, Interpreter, Value};
 use logos::Logos;
 use native_func::NATIVE_FUNCS;
 use token::Token;
@@ -47,7 +47,7 @@ fn interpret<'cx>(program: &[Stmt<'cx>]) -> Result<(), ControlFlow<'cx>> {
     let mut ins = Interpreter::new();
 
     for (ident, func) in NATIVE_FUNCS.iter() {
-        ins.add_var(*ident, Value::Function(Function::Native(*func)));
+        ins.add_var(*ident, Value::Callable(Callable::Native(*func)));
     }
 
     for stmt in program {

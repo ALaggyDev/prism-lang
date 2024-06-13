@@ -37,6 +37,8 @@ pub enum Token<'cx> {
     Return,
     #[token("class")]
     Class,
+    #[token("this")]
+    This,
 
     #[token("=")]
     Assign,

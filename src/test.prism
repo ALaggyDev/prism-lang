@@ -2,14 +2,18 @@
 /* this is a line comment */
 
 class Food {
+	fn __init__() {
+		print("This is init");
+		this.abc = "lol";
+	}
+	
 	fn eat() {
-		console.log("test");
+		print("I am eating");
+		print(this.abc);
+		print(this);
 	}
 }
 
 let hotdog = Food();
 
-hotdog.abc = "lol";
-
-print(hotdog.abc);
-print(hotdog);
+hotdog.eat();

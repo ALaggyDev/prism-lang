@@ -84,6 +84,7 @@ pub enum Expr<'cx> {
     Unary(UnaryOp, Box<Expr<'cx>>),
     Binary(BinaryOp, Box<Expr<'cx>>, Box<Expr<'cx>>),
     Access(Box<Expr<'cx>>, Ident<'cx>),
+    This,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -197,6 +198,7 @@ impl<'cx> Expr<'cx> {
             Token::Minus => Expr::Unary(UnaryOp::Negate, Box::new(Expr::parse_primary(parser)?)),
             Token::Not => Expr::Unary(UnaryOp::Not, Box::new(Expr::parse_primary(parser)?)),
             Token::Ident(ident) => Expr::Variable(ident),
+            Token::This => Expr::This,
             _ => return Err(CompileError("Unexpected token.".into())),
         };
 
@@ -315,7 +317,7 @@ pub struct FunctionDecl<'cx> {
 #[derive(Clone, Debug)]
 pub struct ClassDecl<'cx> {
     pub ident: Ident<'cx>,
-    pub methods: Box<[(Ident<'cx>, FunctionDecl<'cx>)]>,
+    pub methods: Box<[(Ident<'cx>, Rc<FunctionDecl<'cx>>)]>,
 }
 
 impl<'cx> Stmt<'cx> {
@@ -448,7 +450,8 @@ impl<'cx> Parse<'cx> for Stmt<'cx> {
                         break;
                     }
 
-                    methods.push(Stmt::parse_fn(parser)?);
+                    let res = Stmt::parse_fn(parser)?;
+                    methods.push((res.0, Rc::new(res.1)));
                 }
 
                 Ok(Self::Class(ClassDecl {
