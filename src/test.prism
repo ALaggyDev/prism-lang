@@ -1,14 +1,15 @@
 // this is a block comment
 /* this is a line comment */
 
-fn win(a) {
-	print(a);
-
-	fn inner() {
-		print();
+class Food {
+	fn eat() {
+		console.log("test");
 	}
-
-	return inner;
 }
 
-let func = win(2)();
+let hotdog = Food();
+
+hotdog.abc = "lol";
+
+print(hotdog.abc);
+print(hotdog);

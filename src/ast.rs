@@ -83,6 +83,7 @@ pub enum Expr<'cx> {
     Grouped(Box<Expr<'cx>>),
     Unary(UnaryOp, Box<Expr<'cx>>),
     Binary(BinaryOp, Box<Expr<'cx>>, Box<Expr<'cx>>),
+    Access(Box<Expr<'cx>>, Ident<'cx>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -210,6 +211,13 @@ impl<'cx> Expr<'cx> {
 
                     lhs = Expr::FunctionCall(lhs.into(), exprs.into());
                 }
+                Token::Dot => {
+                    parser.advance();
+
+                    let ident = Ident::parse(parser)?;
+
+                    lhs = Expr::Access(lhs.into(), ident);
+                }
                 _ => break,
             }
         }
@@ -295,6 +303,7 @@ pub enum Stmt<'cx> {
     Break,
     Continue,
     Return(Expr<'cx>),
+    Class(ClassDecl<'cx>),
 }
 
 #[derive(Clone, Debug)]
@@ -303,28 +312,41 @@ pub struct FunctionDecl<'cx> {
     pub block: Block<'cx>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ClassDecl<'cx> {
+    pub ident: Ident<'cx>,
+    pub methods: Box<[(Ident<'cx>, FunctionDecl<'cx>)]>,
+}
+
+impl<'cx> Stmt<'cx> {
+    fn parse_fn(parser: &mut Parser<'cx>) -> Result<(Ident<'cx>, FunctionDecl<'cx>), CompileError> {
+        expect_token!(parser, Token::Fn, "Expected fn.");
+
+        let ident = Ident::parse(parser)?;
+
+        expect_token!(parser, Token::OpenParen, "Expected opening paraenesis.");
+
+        let parameters = read_vec!(parser, Ident::parse, Token::Comma, Token::CloseParen);
+
+        let block = Block::parse(parser)?;
+
+        Ok((
+            ident,
+            FunctionDecl {
+                parameters: parameters.into(),
+                block,
+            },
+        ))
+    }
+}
+
 impl<'cx> Parse<'cx> for Stmt<'cx> {
     fn parse(parser: &mut Parser<'cx>) -> Result<Self, CompileError> {
         match parser.peek() {
             Token::OpenBrace => Ok(Self::Block(Block::parse(parser)?)),
             Token::Fn => {
-                parser.advance();
-
-                let ident = Ident::parse(parser)?;
-
-                expect_token!(parser, Token::OpenParen, "Expected opening paraenesis.");
-
-                let parameters = read_vec!(parser, Ident::parse, Token::Comma, Token::CloseParen);
-
-                let block = Block::parse(parser)?;
-
-                Ok(Self::Fn(
-                    ident,
-                    Rc::new(FunctionDecl {
-                        parameters: parameters.into(),
-                        block,
-                    }),
-                ))
+                let decl = Stmt::parse_fn(parser)?;
+                Ok(Self::Fn(decl.0, Rc::new(decl.1)))
             }
             Token::Let => {
                 parser.advance();
@@ -410,6 +432,29 @@ impl<'cx> Parse<'cx> for Stmt<'cx> {
                 expect_token!(parser, Token::Semicolon, "Expected semicolon.");
 
                 Ok(Self::Return(expr))
+            }
+            Token::Class => {
+                parser.advance();
+
+                let ident = Ident::parse(parser)?;
+
+                expect_token!(parser, Token::OpenBrace, "Expected opening brace.");
+
+                let mut methods = Vec::new();
+
+                loop {
+                    if let Token::CloseBrace = parser.peek() {
+                        parser.advance();
+                        break;
+                    }
+
+                    methods.push(Stmt::parse_fn(parser)?);
+                }
+
+                Ok(Self::Class(ClassDecl {
+                    ident,
+                    methods: methods.into(),
+                }))
             }
             _ => {
                 let expr = Expr::parse(parser)?;

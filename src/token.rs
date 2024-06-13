@@ -35,6 +35,8 @@ pub enum Token<'cx> {
     Continue,
     #[token("return")]
     Return,
+    #[token("class")]
+    Class,
 
     #[token("=")]
     Assign,
@@ -42,6 +44,8 @@ pub enum Token<'cx> {
     Comma,
     #[token(";")]
     Semicolon,
+    #[token(".")]
+    Dot,
 
     #[token("(")]
     OpenParen,

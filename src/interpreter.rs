@@ -1,7 +1,7 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
-    ast::{BinaryOp, Block, Expr, FunctionDecl, Stmt, UnaryOp},
+    ast::{BinaryOp, Block, ClassDecl, Expr, FunctionDecl, Stmt, UnaryOp},
     token::{Ident, Literal},
 };
 
@@ -12,6 +12,8 @@ pub enum Value<'cx> {
     Number(f64),
     String(Rc<str>),
     Function(Function<'cx>),
+    Class(Rc<ClassDecl<'cx>>),
+    Object(Rc<RefCell<Object<'cx>>>), // TODO: Use a GC
 }
 
 #[derive(Clone, Debug)]
@@ -125,6 +127,12 @@ impl<'cx> Scope<'cx> {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct Object<'cx> {
+    pub class: Rc<ClassDecl<'cx>>,
+    pub fields: HashMap<Ident<'cx>, Value<'cx>>,
+}
+
 pub trait Evalulate<'cx>: Sized {
     type Item;
 
@@ -139,6 +147,8 @@ impl<'cx> Value<'cx> {
             Value::Number(val) => *val != 0.0 && !(*val).is_nan(),
             Value::String(val) => !(*val).is_empty(),
             Value::Function(_) => true,
+            Value::Class(_) => true,
+            Value::Object(_) => true,
         }
     }
 
@@ -157,6 +167,8 @@ impl<'cx> Value<'cx> {
                 Value::Function(Function::Program(func_1)),
                 Value::Function(Function::Program(func_2)),
             ) => Rc::ptr_eq(func_1, func_2),
+            (Value::Class(class_1), Value::Class(class_2)) => Rc::ptr_eq(class_1, class_2),
+            (Value::Object(obj_1), Value::Object(obj_2)) => Rc::ptr_eq(obj_1, obj_2),
             _ => false,
         }
     }
@@ -191,12 +203,21 @@ impl<'cx> BinaryOp {
         if let BinaryOp::Assign = self {
             // We might need to handle this properly in the future (i.e. l-values), for now this will work
 
-            let Expr::Variable(ident) = op1 else {
-                runtime_error!("Ident expected on left hand side of assignment.".into())
-            };
-
             let val = op2.evalulate(ins)?;
-            *ins.get_var_mut(*ident)? = val.clone();
+
+            match op1 {
+                Expr::Variable(ident) => {
+                    *ins.get_var_mut(*ident)? = val.clone();
+                }
+                Expr::Access(expr, ident) => {
+                    let Value::Object(obj) = expr.evalulate(ins)? else {
+                        runtime_error!("Only . operator can be used on object.".into());
+                    };
+
+                    obj.borrow_mut().fields.insert(*ident, val.clone());
+                }
+                _ => runtime_error!("Invalid left hand side of assignment.".into()),
+            };
 
             return Ok(val);
         }
@@ -256,50 +277,75 @@ impl<'cx> Evalulate<'cx> for Expr<'cx> {
             },
             Expr::Variable(ident) => ins.get_var(*ident)?.clone(),
             Expr::FunctionCall(func_expr, exprs) => {
-                let Value::Function(func) = func_expr.evalulate(ins)? else {
-                    runtime_error!("Expected function.".into())
-                };
+                match func_expr.evalulate(ins)? {
+                    // Function
+                    Value::Function(func) => {
+                        let mut values = Vec::with_capacity(exprs.len());
+                        for expr in exprs.iter() {
+                            values.push(expr.evalulate(ins)?);
+                        }
 
-                let mut values = Vec::with_capacity(exprs.len());
-                for expr in exprs.iter() {
-                    values.push(expr.evalulate(ins)?);
-                }
-
-                match func {
-                    Function::Native(func) => {
-                        // It shouldn't be necessary to create a scope before calling a native function?
-                        func(ins, values)?
-                    }
-                    Function::Program(func) => {
-                        let mut values = values.into_iter();
-
-                        ins.eval_in_scope(|ins| {
-                            for i in 0..func.parameters.len() {
-                                ins.add_var(
-                                    func.parameters[i],
-                                    values.next().unwrap_or(Value::Null),
-                                );
+                        match func {
+                            Function::Native(func) => {
+                                // It shouldn't be necessary to create a scope before calling a native function?
+                                func(ins, values)?
                             }
+                            Function::Program(func) => {
+                                let mut values = values.into_iter();
 
-                            let res = func.block.evalulate(ins);
-                            match res {
-                                Err(ControlFlow::Return(ret_val)) => return Ok(ret_val),
-                                Err(ControlFlow::Break | ControlFlow::Continue) => {
-                                    // Technically this should be compile error
-                                    runtime_error!("Invalid control flow outside loop.".into())
-                                }
-                                _ => res?,
+                                ins.eval_in_scope(|ins| {
+                                    for i in 0..func.parameters.len() {
+                                        ins.add_var(
+                                            func.parameters[i],
+                                            values.next().unwrap_or(Value::Null),
+                                        );
+                                    }
+
+                                    let res = func.block.evalulate(ins);
+                                    match res {
+                                        Err(ControlFlow::Return(ret_val)) => return Ok(ret_val),
+                                        Err(ControlFlow::Break | ControlFlow::Continue) => {
+                                            // Technically this should be compile error
+                                            runtime_error!(
+                                                "Invalid control flow outside loop.".into()
+                                            )
+                                        }
+                                        _ => res?,
+                                    }
+
+                                    // TODO: Return
+                                    Ok(Value::Null)
+                                })?
                             }
-
-                            // TODO: Return
-                            Ok(Value::Null)
-                        })?
+                        }
                     }
+                    // Class
+                    Value::Class(class) => {
+                        let obj = Object {
+                            class,
+                            fields: HashMap::new(),
+                        };
+
+                        Value::Object(Rc::new(RefCell::new(obj)))
+                    }
+                    _ => runtime_error!("Invalid function call.".into()),
                 }
             }
             Expr::Grouped(expr) => expr.evalulate(ins)?,
             Expr::Unary(op, op_1) => op.evalulate_op(ins, op_1)?,
             Expr::Binary(op, op_1, op_2) => op.evalulate_op(ins, op_1, op_2)?,
+            Expr::Access(expr, ident) => {
+                let Value::Object(obj) = expr.evalulate(ins)? else {
+                    runtime_error!("Only . operator can be used on object.".into());
+                };
+
+                let temp = obj.borrow();
+                let Some(val) = temp.fields.get(ident) else {
+                    runtime_error!("Unknown field.".into());
+                };
+
+                val.clone()
+            }
         })
     }
 }
@@ -347,6 +393,9 @@ impl<'cx> Evalulate<'cx> for Stmt<'cx> {
             Stmt::Break => return Err(ControlFlow::Break),
             Stmt::Continue => return Err(ControlFlow::Continue),
             Stmt::Return(expr) => return Err(ControlFlow::Return(expr.evalulate(ins)?)),
+            Stmt::Class(class) => {
+                ins.add_var(class.ident, Value::Class(Rc::new(class.clone())));
+            }
         };
 
         Ok(())
