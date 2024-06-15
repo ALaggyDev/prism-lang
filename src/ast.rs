@@ -325,6 +325,7 @@ pub struct FunctionDecl {
 #[derive(Clone, Debug, Trace, Finalize)]
 pub struct ClassDecl {
     pub ident: Ident,
+    pub parent_ident: Option<Ident>,
     pub methods: Box<[(Ident, Gc<FunctionDecl>)]>,
 }
 
@@ -448,6 +449,14 @@ impl Parse for Stmt {
 
                 let ident = Ident::parse(parser)?;
 
+                let parent_ident = if let Token::Colon = parser.peek() {
+                    parser.advance();
+
+                    Some(Ident::parse(parser)?)
+                } else {
+                    None
+                };
+
                 expect_token!(parser, Token::OpenBrace, "Expected opening brace.");
 
                 let mut methods = Vec::new();
@@ -464,6 +473,7 @@ impl Parse for Stmt {
 
                 Ok(Self::Class(ClassDecl {
                     ident,
+                    parent_ident,
                     methods: methods.into(),
                 }))
             }

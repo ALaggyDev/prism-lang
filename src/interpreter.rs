@@ -335,7 +335,7 @@ impl Evalulate for Expr {
                                 // It shouldn't be necessary to create a scope before calling a native function?
                                 func(ins, values)?
                             }
-                            Callable::Function(func) => eval_fn(ins, &func, values, |_| {})?,
+                            Callable::Function(func) => eval_fn(ins, func, values, |_| {})?,
                             Callable::Method(method) => eval_fn(ins, &method.1, values, |ins| {
                                 ins.get_scope_mut().this = Some(method.0.clone());
                             })?,
@@ -344,29 +344,17 @@ impl Evalulate for Expr {
                     // Class
                     Value::Class(ref class) => {
                         let obj = Gc::new(GcCell::new(Object {
-                            class: Gc::clone(&class),
+                            class: Gc::clone(class),
                             fields: HashMap::new(),
                         }));
 
-                        // Bind methods
-                        for method in class.methods.iter() {
-                            obj.borrow_mut().fields.insert(
-                                method.0,
-                                Value::Callable(Callable::Method(Box::new((
-                                    Value::Object(obj.clone()),
-                                    Gc::clone(&method.1),
-                                )))),
-                            );
-                        }
+                        let init_ident = Ident(ins.interner.get_or_intern_static("__init__"));
 
                         // Call initializer
-                        for method in class.methods.iter() {
-                            if method.0 == Ident(ins.interner.get_or_intern_static("__init__")) {
-                                eval_fn(ins, &method.1, Vec::new(), |ins| {
-                                    ins.get_scope_mut().this = Some(Value::Object(obj.clone()));
-                                })?;
-                                break;
-                            }
+                        if let Some(init_func) = class.find_method(ins, init_ident)? {
+                            eval_fn(ins, &init_func, Vec::new(), |ins| {
+                                ins.get_scope_mut().this = Some(Value::Object(obj.clone()));
+                            })?;
                         }
 
                         Value::Object(obj)
@@ -383,11 +371,19 @@ impl Evalulate for Expr {
                 };
 
                 let temp = obj.borrow();
-                let Some(val) = temp.fields.get(ident) else {
-                    runtime_error!("Unknown field.".into());
-                };
 
-                val.clone()
+                if let Some(val) = temp.fields.get(ident) {
+                    // Field access
+                    val.clone()
+                } else if let Some(method) = temp.class.find_method(ins, *ident)? {
+                    // Method access
+                    Value::Callable(Callable::Method(Box::new((
+                        Value::Object(obj.clone()),
+                        Gc::clone(&method),
+                    ))))
+                } else {
+                    runtime_error!("Unknown fields or methods.".into())
+                }
             }
             Expr::This => ins.get_this()?,
         })
@@ -467,6 +463,32 @@ impl std::fmt::Debug for Callable {
             Callable::Native(f0) => f.debug_tuple("Native").field(&f0).finish(),
             Callable::Function(f0) => f.debug_tuple("Function").field(&f0).finish(),
             Callable::Method(f0) => f.debug_tuple("Method").field(&f0.1).finish(),
+        }
+    }
+}
+
+impl ClassDecl {
+    pub fn find_method(
+        &self,
+        ins: &Interpreter,
+        ident: Ident,
+    ) -> Result<Option<Gc<FunctionDecl>>, ControlFlow> {
+        // Find the method in this class
+        for (func_ident, func) in self.methods.iter() {
+            if *func_ident == ident {
+                return Ok(Some(func.clone()));
+            }
+        }
+
+        // Otherwise, find the method in the parents
+        if let Some(parent_ident) = self.parent_ident {
+            let Value::Class(parent_class) = ins.get_var(parent_ident)? else {
+                runtime_error!("Inherited superclass must be class.".into());
+            };
+
+            parent_class.find_method(&ins.clone(), ident)
+        } else {
+            Ok(None)
         }
     }
 }

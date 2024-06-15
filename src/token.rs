@@ -49,6 +49,8 @@ pub enum Token {
     Semicolon,
     #[token(".")]
     Dot,
+    #[token(":")]
+    Colon,
 
     #[token("(")]
     OpenParen,
