@@ -1,45 +1,47 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
+use string_interner::{DefaultBackend, StringInterner};
+
 use crate::{
     ast::{BinaryOp, Block, ClassDecl, Expr, FunctionDecl, Stmt, UnaryOp},
+    native_func::NATIVE_FUNCS,
     token::{Ident, Literal},
 };
 
-// TODO: Use a GC! Value<'cx> creates a reference loop and will never dealloc
+// TODO: Use a GC! Value creates a reference loop and will never dealloc
 
 #[derive(Clone, Debug)]
-pub enum Value<'cx> {
+pub enum Value {
     Null,
     Bool(bool),
     Number(f64),
     String(Rc<str>),
-    Callable(Callable<'cx>),
-    Class(Rc<ClassDecl<'cx>>),
-    Object(Rc<RefCell<Object<'cx>>>),
+    Callable(Callable),
+    Class(Rc<ClassDecl>),
+    Object(Rc<RefCell<Object>>),
 }
 
 #[derive(Clone)]
-pub enum Callable<'cx> {
+pub enum Callable {
     Native(NativeFuncPtr),
-    Function(Rc<FunctionDecl<'cx>>),
-    Method(Box<(Value<'cx>, Rc<FunctionDecl<'cx>>)>),
+    Function(Rc<FunctionDecl>),
+    Method(Box<(Value, Rc<FunctionDecl>)>),
 }
 
-pub type NativeFuncPtr = for<'cx> fn(
-    ins: &mut Interpreter<'cx>,
-    values: Vec<Value<'cx>>,
-) -> Result<Value<'cx>, ControlFlow<'cx>>;
+pub type NativeFuncPtr =
+    fn(ins: &mut Interpreter, values: Vec<Value>) -> Result<Value, ControlFlow>;
 
 #[derive(Clone, Debug)]
-pub struct Interpreter<'cx> {
-    scopes: Vec<Scope<'cx>>,
+pub struct Interpreter {
+    scopes: Vec<Scope>,
+    interner: StringInterner<DefaultBackend>,
 }
 
 #[derive(Clone, Debug)]
-pub enum ControlFlow<'cx> {
+pub enum ControlFlow {
     Break,
     Continue,
-    Return(Value<'cx>),
+    Return(Value),
     Error(RuntimeError),
 }
 
@@ -52,23 +54,25 @@ macro_rules! runtime_error {
     };
 }
 
-impl<'cx> Default for Interpreter<'cx> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<'cx> Interpreter<'cx> {
-    pub fn new() -> Self {
-        Self {
+impl Interpreter {
+    pub fn new(interner: StringInterner<DefaultBackend>) -> Self {
+        let mut ins = Self {
             scopes: vec![Scope::new()],
+            interner,
+        };
+
+        for (name, func) in NATIVE_FUNCS.iter() {
+            let ident = ins.interner.get_or_intern_static(name);
+            ins.add_var(ident, Value::Callable(Callable::Native(*func)));
         }
+
+        ins
     }
 
     pub fn eval_in_scope<Item>(
         &mut self,
-        func: impl FnOnce(&mut Self) -> Result<Item, ControlFlow<'cx>>,
-    ) -> Result<Item, ControlFlow<'cx>> {
+        func: impl FnOnce(&mut Self) -> Result<Item, ControlFlow>,
+    ) -> Result<Item, ControlFlow> {
         self.scopes.push(Scope::new());
 
         let res = func(self);
@@ -78,19 +82,19 @@ impl<'cx> Interpreter<'cx> {
         res
     }
 
-    pub fn get_scope(&self) -> &Scope<'cx> {
+    pub fn get_scope(&self) -> &Scope {
         unsafe { self.scopes.last().unwrap_unchecked() }
     }
 
-    pub fn get_scope_mut(&mut self) -> &mut Scope<'cx> {
+    pub fn get_scope_mut(&mut self) -> &mut Scope {
         unsafe { self.scopes.last_mut().unwrap_unchecked() }
     }
 
-    pub fn add_var(&mut self, ident: Ident<'cx>, value: Value<'cx>) {
+    pub fn add_var(&mut self, ident: Ident, value: Value) {
         self.get_scope_mut().vars.insert(ident, value);
     }
 
-    pub fn get_var(&self, ident: Ident<'cx>) -> Result<&Value<'cx>, ControlFlow<'cx>> {
+    pub fn get_var(&self, ident: Ident) -> Result<&Value, ControlFlow> {
         for scope in self.scopes.iter().rev() {
             if let Some(value) = scope.vars.get(&ident) {
                 return Ok(value);
@@ -100,7 +104,7 @@ impl<'cx> Interpreter<'cx> {
         runtime_error!("Variable not defined.".into())
     }
 
-    pub fn get_var_mut(&mut self, ident: Ident<'cx>) -> Result<&mut Value<'cx>, ControlFlow<'cx>> {
+    pub fn get_var_mut(&mut self, ident: Ident) -> Result<&mut Value, ControlFlow> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(value) = scope.vars.get_mut(&ident) {
                 return Ok(value);
@@ -110,7 +114,7 @@ impl<'cx> Interpreter<'cx> {
         runtime_error!("Variable not defined.".into())
     }
 
-    pub fn get_this(&self) -> Result<Value<'cx>, ControlFlow<'cx>> {
+    pub fn get_this(&self) -> Result<Value, ControlFlow> {
         for scope in self.scopes.iter().rev() {
             if let Some(this) = &scope.this {
                 return Ok(this.clone());
@@ -122,18 +126,18 @@ impl<'cx> Interpreter<'cx> {
 }
 
 #[derive(Clone, Debug)]
-pub struct Scope<'cx> {
-    this: Option<Value<'cx>>,
-    vars: HashMap<Ident<'cx>, Value<'cx>>,
+pub struct Scope {
+    this: Option<Value>,
+    vars: HashMap<Ident, Value>,
 }
 
-impl<'cx> Default for Scope<'cx> {
+impl Default for Scope {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'cx> Scope<'cx> {
+impl Scope {
     pub fn new() -> Self {
         Self {
             this: None,
@@ -143,18 +147,18 @@ impl<'cx> Scope<'cx> {
 }
 
 #[derive(Clone, Debug)]
-pub struct Object<'cx> {
-    pub class: Rc<ClassDecl<'cx>>,
-    pub fields: HashMap<Ident<'cx>, Value<'cx>>,
+pub struct Object {
+    pub class: Rc<ClassDecl>,
+    pub fields: HashMap<Ident, Value>,
 }
 
-pub trait Evalulate<'cx>: Sized {
+pub trait Evalulate: Sized {
     type Item;
 
-    fn evalulate(&self, ins: &mut Interpreter<'cx>) -> Result<Self::Item, ControlFlow<'cx>>;
+    fn evalulate(&self, ins: &mut Interpreter) -> Result<Self::Item, ControlFlow>;
 }
 
-impl<'cx> Value<'cx> {
+impl Value {
     pub fn is_truthy(&self) -> bool {
         match self {
             Value::Null => false,
@@ -189,12 +193,8 @@ impl<'cx> Value<'cx> {
     }
 }
 
-impl<'cx> UnaryOp {
-    fn evalulate_op(
-        &self,
-        ins: &mut Interpreter<'cx>,
-        op1: &Expr<'cx>,
-    ) -> Result<Value<'cx>, ControlFlow<'cx>> {
+impl UnaryOp {
+    fn evalulate_op(&self, ins: &mut Interpreter, op1: &Expr) -> Result<Value, ControlFlow> {
         let op1 = op1.evalulate(ins)?;
 
         match self {
@@ -207,13 +207,13 @@ impl<'cx> UnaryOp {
     }
 }
 
-impl<'cx> BinaryOp {
+impl BinaryOp {
     fn evalulate_op(
         &self,
-        ins: &mut Interpreter<'cx>,
-        op1: &Expr<'cx>,
-        op2: &Expr<'cx>,
-    ) -> Result<Value<'cx>, ControlFlow<'cx>> {
+        ins: &mut Interpreter,
+        op1: &Expr,
+        op2: &Expr,
+    ) -> Result<Value, ControlFlow> {
         // Assignment have special treatment
         if let BinaryOp::Assign = self {
             // We might need to handle this properly in the future (i.e. l-values), for now this will work
@@ -279,12 +279,12 @@ impl<'cx> BinaryOp {
     }
 }
 
-fn eval_fn<'cx>(
-    ins: &mut Interpreter<'cx>,
-    func: &FunctionDecl<'cx>,
-    values: Vec<Value<'cx>>,
-    extra_fn: impl FnOnce(&mut Interpreter<'cx>),
-) -> Result<Value<'cx>, ControlFlow<'cx>> {
+fn eval_fn(
+    ins: &mut Interpreter,
+    func: &FunctionDecl,
+    values: Vec<Value>,
+    extra_fn: impl FnOnce(&mut Interpreter),
+) -> Result<Value, ControlFlow> {
     let mut values = values.into_iter();
 
     ins.eval_in_scope(|ins| {
@@ -310,10 +310,10 @@ fn eval_fn<'cx>(
     })
 }
 
-impl<'cx> Evalulate<'cx> for Expr<'cx> {
-    type Item = Value<'cx>;
+impl Evalulate for Expr {
+    type Item = Value;
 
-    fn evalulate(&self, ins: &mut Interpreter<'cx>) -> Result<Self::Item, ControlFlow<'cx>> {
+    fn evalulate(&self, ins: &mut Interpreter) -> Result<Self::Item, ControlFlow> {
         Ok(match self {
             Expr::Literal(val) => match val {
                 Literal::Null => Value::Null,
@@ -362,7 +362,7 @@ impl<'cx> Evalulate<'cx> for Expr<'cx> {
 
                         // Call initializer
                         for method in class.methods.iter() {
-                            if method.0 .0 == "__init__" {
+                            if method.0 == ins.interner.get_or_intern_static("__init__") {
                                 eval_fn(ins, &method.1, Vec::new(), |ins| {
                                     ins.get_scope_mut().this = Some(Value::Object(obj.clone()));
                                 })?;
@@ -395,10 +395,10 @@ impl<'cx> Evalulate<'cx> for Expr<'cx> {
     }
 }
 
-impl<'cx> Evalulate<'cx> for Stmt<'cx> {
+impl Evalulate for Stmt {
     type Item = ();
 
-    fn evalulate(&self, ins: &mut Interpreter<'cx>) -> Result<Self::Item, ControlFlow<'cx>> {
+    fn evalulate(&self, ins: &mut Interpreter) -> Result<Self::Item, ControlFlow> {
         match self {
             Stmt::Expr(expr) => {
                 expr.evalulate(ins)?;
@@ -447,10 +447,10 @@ impl<'cx> Evalulate<'cx> for Stmt<'cx> {
     }
 }
 
-impl<'cx> Evalulate<'cx> for Block<'cx> {
+impl Evalulate for Block {
     type Item = ();
 
-    fn evalulate(&self, ins: &mut Interpreter<'cx>) -> Result<Self::Item, ControlFlow<'cx>> {
+    fn evalulate(&self, ins: &mut Interpreter) -> Result<Self::Item, ControlFlow> {
         ins.eval_in_scope(|ins| {
             for stmt in self.0.iter() {
                 stmt.evalulate(ins)?;
@@ -462,7 +462,7 @@ impl<'cx> Evalulate<'cx> for Block<'cx> {
 }
 
 // Temp hack to stop println!() from entering a loop
-impl<'cx> std::fmt::Debug for Callable<'cx> {
+impl std::fmt::Debug for Callable {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Callable::Native(f0) => f.debug_tuple("Native").field(&f0).finish(),

@@ -1,7 +1,7 @@
 use ast::{CompileError, Parse, Parser, Stmt};
-use interpreter::{ControlFlow, Evalulate, Callable, Interpreter, Value};
+use interpreter::{ControlFlow, Evalulate, Interpreter};
 use logos::Logos;
-use native_func::NATIVE_FUNCS;
+use string_interner::{DefaultBackend, StringInterner};
 use token::Token;
 
 pub mod ast;
@@ -9,8 +9,8 @@ pub mod interpreter;
 pub mod native_func;
 pub mod token;
 
-fn stage_1(program: &str) -> Vec<Token> {
-    let mut lex = Token::lexer(program);
+fn stage_1(program: &str) -> (Vec<Token>, StringInterner<DefaultBackend>) {
+    let mut lex = Token::lexer_with_extras(program, StringInterner::new());
 
     let mut tokens = Vec::new();
     let mut errored = false;
@@ -28,10 +28,10 @@ fn stage_1(program: &str) -> Vec<Token> {
         panic!("Exit");
     }
 
-    tokens
+    (tokens, lex.extras)
 }
 
-fn stage_2<'cx>(tokens: &'cx [Token<'cx>]) -> Result<Vec<Stmt<'cx>>, CompileError> {
+fn stage_2(tokens: &[Token]) -> Result<Vec<Stmt>, CompileError> {
     let mut parser = Parser::new(tokens);
 
     let mut stmts = vec![];
@@ -43,12 +43,11 @@ fn stage_2<'cx>(tokens: &'cx [Token<'cx>]) -> Result<Vec<Stmt<'cx>>, CompileErro
     Ok(stmts)
 }
 
-fn interpret<'cx>(program: &[Stmt<'cx>]) -> Result<(), ControlFlow<'cx>> {
-    let mut ins = Interpreter::new();
-
-    for (ident, func) in NATIVE_FUNCS.iter() {
-        ins.add_var(*ident, Value::Callable(Callable::Native(*func)));
-    }
+fn interpret(
+    program: &[Stmt],
+    interner: StringInterner<DefaultBackend>,
+) -> Result<(), ControlFlow> {
+    let mut ins = Interpreter::new(interner);
 
     for stmt in program {
         stmt.evalulate(&mut ins)?;
@@ -60,9 +59,9 @@ fn interpret<'cx>(program: &[Stmt<'cx>]) -> Result<(), ControlFlow<'cx>> {
 fn main() {
     println!("Prism!");
 
-    let tokens = stage_1(include_str!("./test.prism"));
+    let (tokens, interner) = stage_1(include_str!("./test.prism"));
     let program = stage_2(&tokens).unwrap();
 
-    let res = interpret(&program);
+    let res = interpret(&program, interner);
     println!("{:?}", res);
 }

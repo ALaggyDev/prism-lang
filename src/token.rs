@@ -1,14 +1,16 @@
 use std::rc::Rc;
 
 use logos::Logos;
+use string_interner::{DefaultBackend, DefaultSymbol, StringInterner};
 
 #[derive(Logos, Clone, Debug, PartialEq)]
+#[logos(extras = StringInterner<DefaultBackend>)]
 #[logos(skip r"[ \t\r\n]+")]
 #[logos(skip r"\/\/[^\r\n]*")] // Line comment
 #[logos(skip r"\/\*([^*]|\*[^/])*\*\/")] // Block comment (unnested)
-pub enum Token<'cx> {
-    #[regex("[a-zA-Z_][a-zA-Z0-9_]*", |lex| Ident(lex.slice()), priority = 1)]
-    Ident(Ident<'cx>),
+pub enum Token {
+    #[regex("[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.extras.get_or_intern(lex.slice()), priority = 1)]
+    Ident(Ident),
 
     #[token("null", |_| Literal::Null)]
     #[token("true", |_| Literal::Bool(true))]
@@ -92,8 +94,7 @@ pub enum Token<'cx> {
     Eof,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct Ident<'cx>(pub &'cx str);
+pub type Ident = DefaultSymbol;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Literal {
