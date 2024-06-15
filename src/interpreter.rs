@@ -1,5 +1,6 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::collections::HashMap;
 
+use gc::{Finalize, Gc, GcCell, Trace};
 use string_interner::{DefaultBackend, StringInterner};
 
 use crate::{
@@ -8,24 +9,22 @@ use crate::{
     token::{Ident, Literal},
 };
 
-// TODO: Use a GC! Value creates a reference loop and will never dealloc
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Trace, Finalize)]
 pub enum Value {
     Null,
     Bool(bool),
     Number(f64),
-    String(Rc<str>),
+    String(Gc<String>),
     Callable(Callable),
-    Class(Rc<ClassDecl>),
-    Object(Rc<RefCell<Object>>),
+    Class(Gc<ClassDecl>),
+    Object(Gc<GcCell<Object>>),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Trace, Finalize)]
 pub enum Callable {
-    Native(NativeFuncPtr),
-    Function(Rc<FunctionDecl>),
-    Method(Box<(Value, Rc<FunctionDecl>)>),
+    Native(#[unsafe_ignore_trace] NativeFuncPtr),
+    Function(Gc<FunctionDecl>),
+    Method(Box<(Value, Gc<FunctionDecl>)>),
 }
 
 pub type NativeFuncPtr =
@@ -62,7 +61,7 @@ impl Interpreter {
         };
 
         for (name, func) in NATIVE_FUNCS.iter() {
-            let ident = ins.interner.get_or_intern_static(name);
+            let ident = Ident(ins.interner.get_or_intern_static(name));
             ins.add_var(ident, Value::Callable(Callable::Native(*func)));
         }
 
@@ -146,9 +145,9 @@ impl Scope {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Trace, Finalize)]
 pub struct Object {
-    pub class: Rc<ClassDecl>,
+    pub class: Gc<ClassDecl>,
     pub fields: HashMap<Ident, Value>,
 }
 
@@ -185,9 +184,9 @@ impl Value {
             (
                 Value::Callable(Callable::Function(func_1)),
                 Value::Callable(Callable::Function(func_2)),
-            ) => Rc::ptr_eq(func_1, func_2),
-            (Value::Class(class_1), Value::Class(class_2)) => Rc::ptr_eq(class_1, class_2),
-            (Value::Object(obj_1), Value::Object(obj_2)) => Rc::ptr_eq(obj_1, obj_2),
+            ) => Gc::ptr_eq(func_1, func_2),
+            (Value::Class(class_1), Value::Class(class_2)) => Gc::ptr_eq(class_1, class_2),
+            (Value::Object(obj_1), Value::Object(obj_2)) => Gc::ptr_eq(obj_1, obj_2),
             _ => false,
         }
     }
@@ -225,7 +224,7 @@ impl BinaryOp {
                     *ins.get_var_mut(*ident)? = val.clone();
                 }
                 Expr::Access(expr, ident) => {
-                    let Value::Object(obj) = expr.evalulate(ins)? else {
+                    let Value::Object(ref obj) = expr.evalulate(ins)? else {
                         runtime_error!("Only . operator can be used on object.".into());
                     };
 
@@ -319,13 +318,13 @@ impl Evalulate for Expr {
                 Literal::Null => Value::Null,
                 Literal::Bool(val) => Value::Bool(*val),
                 Literal::Number(val) => Value::Number(*val),
-                Literal::String(val) => Value::String(Rc::clone(val)),
+                Literal::String(val) => Value::String(Gc::new(val.to_string())),
             },
             Expr::Variable(ident) => ins.get_var(*ident)?.clone(),
             Expr::FunctionCall(call_expr, exprs) => {
                 match call_expr.evalulate(ins)? {
                     // Function
-                    Value::Callable(callable) => {
+                    Value::Callable(ref callable) => {
                         let mut values = Vec::with_capacity(exprs.len());
                         for expr in exprs.iter() {
                             values.push(expr.evalulate(ins)?);
@@ -343,9 +342,9 @@ impl Evalulate for Expr {
                         }
                     }
                     // Class
-                    Value::Class(class) => {
-                        let obj = Rc::new(RefCell::new(Object {
-                            class: Rc::clone(&class),
+                    Value::Class(ref class) => {
+                        let obj = Gc::new(GcCell::new(Object {
+                            class: Gc::clone(&class),
                             fields: HashMap::new(),
                         }));
 
@@ -355,14 +354,14 @@ impl Evalulate for Expr {
                                 method.0,
                                 Value::Callable(Callable::Method(Box::new((
                                     Value::Object(obj.clone()),
-                                    Rc::clone(&method.1),
+                                    Gc::clone(&method.1),
                                 )))),
                             );
                         }
 
                         // Call initializer
                         for method in class.methods.iter() {
-                            if method.0 == ins.interner.get_or_intern_static("__init__") {
+                            if method.0 == Ident(ins.interner.get_or_intern_static("__init__")) {
                                 eval_fn(ins, &method.1, Vec::new(), |ins| {
                                     ins.get_scope_mut().this = Some(Value::Object(obj.clone()));
                                 })?;
@@ -379,7 +378,7 @@ impl Evalulate for Expr {
             Expr::Unary(op, op_1) => op.evalulate_op(ins, op_1)?,
             Expr::Binary(op, op_1, op_2) => op.evalulate_op(ins, op_1, op_2)?,
             Expr::Access(expr, ident) => {
-                let Value::Object(obj) = expr.evalulate(ins)? else {
+                let Value::Object(ref obj) = expr.evalulate(ins)? else {
                     runtime_error!("Only . operator can be used on object.".into());
                 };
 
@@ -407,7 +406,7 @@ impl Evalulate for Stmt {
                 block.evalulate(ins)?;
             }
             Stmt::Fn(ident, func) => {
-                ins.add_var(*ident, Value::Callable(Callable::Function(Rc::clone(func))));
+                ins.add_var(*ident, Value::Callable(Callable::Function(Gc::clone(func))));
             }
             Stmt::Let(ident, expr) => {
                 let val = expr.evalulate(ins)?;
@@ -439,7 +438,7 @@ impl Evalulate for Stmt {
             Stmt::Continue => return Err(ControlFlow::Continue),
             Stmt::Return(expr) => return Err(ControlFlow::Return(expr.evalulate(ins)?)),
             Stmt::Class(class) => {
-                ins.add_var(class.ident, Value::Class(Rc::new(class.clone())));
+                ins.add_var(class.ident, Value::Class(Gc::new(class.clone())));
             }
         };
 

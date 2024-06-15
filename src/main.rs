@@ -1,3 +1,5 @@
+#![allow(non_local_definitions)] // for gc-derive in miri run
+
 use ast::{CompileError, Parse, Parser, Stmt};
 use interpreter::{ControlFlow, Evalulate, Interpreter};
 use logos::Logos;

@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use gc::{unsafe_empty_trace, Finalize, Gc, Trace};
 
 use crate::token::{Ident, Literal, Token};
 
@@ -75,7 +75,7 @@ pub trait Parse: Sized {
     fn parse(parser: &mut Parser) -> Result<Self, CompileError>;
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Trace, Finalize)]
 pub enum Expr {
     Literal(Literal),
     Variable(Ident),
@@ -87,13 +87,13 @@ pub enum Expr {
     This,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Finalize)]
 pub enum UnaryOp {
     Negate,
     Not,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Finalize)]
 pub enum BinaryOp {
     Assign,
 
@@ -110,6 +110,14 @@ pub enum BinaryOp {
     LessOrEqual,
     And,
     Or,
+}
+
+unsafe impl Trace for UnaryOp {
+    unsafe_empty_trace!();
+}
+
+unsafe impl Trace for BinaryOp {
+    unsafe_empty_trace!();
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -294,11 +302,11 @@ impl Parse for Expr {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Trace, Finalize)]
 pub enum Stmt {
     Expr(Expr),
     Block(Block),
-    Fn(Ident, Rc<FunctionDecl>),
+    Fn(Ident, Gc<FunctionDecl>),
     Let(Ident, Expr),
     If(Box<[(Expr, Block)]>, Option<Block>),
     While(Expr, Block),
@@ -308,16 +316,16 @@ pub enum Stmt {
     Class(ClassDecl),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Trace, Finalize)]
 pub struct FunctionDecl {
     pub parameters: Box<[Ident]>,
     pub block: Block,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Trace, Finalize)]
 pub struct ClassDecl {
     pub ident: Ident,
-    pub methods: Box<[(Ident, Rc<FunctionDecl>)]>,
+    pub methods: Box<[(Ident, Gc<FunctionDecl>)]>,
 }
 
 impl Stmt {
@@ -348,7 +356,7 @@ impl Parse for Stmt {
             Token::OpenBrace => Ok(Self::Block(Block::parse(parser)?)),
             Token::Fn => {
                 let decl = Stmt::parse_fn(parser)?;
-                Ok(Self::Fn(decl.0, Rc::new(decl.1)))
+                Ok(Self::Fn(decl.0, Gc::new(decl.1)))
             }
             Token::Let => {
                 parser.advance();
@@ -451,7 +459,7 @@ impl Parse for Stmt {
                     }
 
                     let res = Stmt::parse_fn(parser)?;
-                    methods.push((res.0, Rc::new(res.1)));
+                    methods.push((res.0, Gc::new(res.1)));
                 }
 
                 Ok(Self::Class(ClassDecl {
@@ -470,7 +478,7 @@ impl Parse for Stmt {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Trace, Finalize)]
 pub struct Block(pub Box<[Stmt]>);
 
 impl Parse for Block {

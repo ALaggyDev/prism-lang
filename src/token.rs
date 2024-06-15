@@ -1,5 +1,4 @@
-use std::rc::Rc;
-
+use gc::{unsafe_empty_trace, Finalize, Trace};
 use logos::Logos;
 use string_interner::{DefaultBackend, DefaultSymbol, StringInterner};
 
@@ -9,7 +8,7 @@ use string_interner::{DefaultBackend, DefaultSymbol, StringInterner};
 #[logos(skip r"\/\/[^\r\n]*")] // Line comment
 #[logos(skip r"\/\*([^*]|\*[^/])*\*\/")] // Block comment (unnested)
 pub enum Token {
-    #[regex("[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.extras.get_or_intern(lex.slice()), priority = 1)]
+    #[regex("[a-zA-Z_][a-zA-Z0-9_]*", |lex| Ident(lex.extras.get_or_intern(lex.slice())), priority = 1)]
     Ident(Ident),
 
     #[token("null", |_| Literal::Null)]
@@ -94,12 +93,17 @@ pub enum Token {
     Eof,
 }
 
-pub type Ident = DefaultSymbol;
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Finalize)]
+pub struct Ident(pub DefaultSymbol);
 
-#[derive(Clone, Debug, PartialEq)]
+unsafe impl Trace for Ident {
+    unsafe_empty_trace!();
+}
+
+#[derive(Clone, Debug, PartialEq, Trace, Finalize)]
 pub enum Literal {
     Null,
     Bool(bool),
     Number(f64),
-    String(Rc<str>),
+    String(Box<str>),
 }
