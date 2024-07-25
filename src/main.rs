@@ -1,5 +1,7 @@
 #![allow(non_local_definitions)] // for gc-derive in miri run
 
+use std::{env, fs, io};
+
 use ast::{CompileError, Parse, Parser, Stmt};
 use interpreter::{ControlFlow, Evalulate, Interpreter};
 use logos::Logos;
@@ -58,12 +60,19 @@ fn interpret(
     Ok(())
 }
 
-fn main() {
+fn main() -> Result<(), io::Error> {
     println!("Prism!");
 
-    let (tokens, interner) = stage_1(include_str!("./test.prism"));
+    let pathname = env::args()
+        .nth(1)
+        .expect("Please provide a path to the script.");
+    let content = fs::read_to_string(&pathname)?;
+
+    let (tokens, interner) = stage_1(&content);
     let program = stage_2(&tokens).unwrap();
 
     let res = interpret(&program, interner);
     println!("{:?}", res);
+
+    Ok(())
 }
