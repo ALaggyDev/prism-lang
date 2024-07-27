@@ -3,13 +3,12 @@
 use std::{env, fs, io};
 
 use ast::{CompileError, Parse, Parser, Stmt};
-use interpreter::{ControlFlow, Evalulate, Interpreter};
 use logos::Logos;
 use string_interner::{DefaultBackend, StringInterner};
 use token::Token;
 
 pub mod ast;
-pub mod interpreter;
+pub mod bytecode;
 pub mod native_func;
 pub mod token;
 
@@ -47,32 +46,16 @@ fn stage_2(tokens: &[Token]) -> Result<Vec<Stmt>, CompileError> {
     Ok(stmts)
 }
 
-fn interpret(
-    program: &[Stmt],
-    interner: StringInterner<DefaultBackend>,
-) -> Result<(), ControlFlow> {
-    let mut ins = Interpreter::new(interner);
-
-    for stmt in program {
-        stmt.evalulate(&mut ins)?;
-    }
-
-    Ok(())
-}
-
 fn main() -> Result<(), io::Error> {
     println!("Prism!");
 
     let pathname = env::args()
         .nth(1)
         .expect("Please provide a path to the script.");
-    let content = fs::read_to_string(&pathname)?;
+    let content = fs::read_to_string(pathname)?;
 
     let (tokens, interner) = stage_1(&content);
     let program = stage_2(&tokens).unwrap();
-
-    let res = interpret(&program, interner);
-    println!("{:?}", res);
 
     Ok(())
 }

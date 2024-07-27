@@ -97,7 +97,7 @@ pub enum UnaryOp {
 pub enum BinaryOp {
     Assign,
 
-    Plus,
+    Add,
     Minus,
     Multiply,
     Divide,
@@ -141,7 +141,7 @@ impl BinaryOp {
     pub fn new(token: &Token) -> Option<BinaryOp> {
         match token {
             Token::Assign => Some(Self::Assign),
-            Token::Plus => Some(Self::Plus),
+            Token::Plus => Some(Self::Add),
             Token::Minus => Some(Self::Minus),
             Token::Multiply => Some(Self::Multiply),
             Token::Divide => Some(Self::Divide),
@@ -160,7 +160,7 @@ impl BinaryOp {
     pub fn precedence(self) -> usize {
         match self {
             Self::Multiply | Self::Divide => 4,
-            Self::Plus | Self::Minus => 3,
+            Self::Add | Self::Minus => 3,
             Self::Equal
             | Self::NotEqual
             | Self::Greater
@@ -174,7 +174,7 @@ impl BinaryOp {
 
     pub fn fixity(self) -> Fixity {
         match self {
-            Self::Plus
+            Self::Add
             | Self::Minus
             | Self::Multiply
             | Self::Divide

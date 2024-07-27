@@ -1,8 +1,8 @@
-use crate::interpreter::{ControlFlow, Interpreter, NativeFuncPtr, Value};
+use crate::bytecode::{NativeFunc, Value};
 
-pub fn print(_: &mut Interpreter, values: Vec<Value>) -> Result<Value, ControlFlow> {
-    println!("{:?}", values);
-    Ok(Value::Null)
+pub fn print(args: &[Value]) -> Value {
+    println!("{:?}", args);
+    Value::Null
 }
 
-pub static NATIVE_FUNCS: &[(&str, NativeFuncPtr)] = &[("print", print)];
+pub static NATIVE_FUNCS: &[(&str, NativeFunc)] = &[("print", print)];

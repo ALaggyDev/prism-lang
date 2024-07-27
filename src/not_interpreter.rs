@@ -5,7 +5,7 @@ use string_interner::{DefaultBackend, StringInterner};
 
 use crate::{
     ast::{BinaryOp, Block, ClassDecl, Expr, FunctionDecl, Stmt, UnaryOp},
-    native_func::NATIVE_FUNCS,
+    not_native_func::NATIVE_FUNCS,
     token::{Ident, Literal},
 };
 
