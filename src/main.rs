@@ -1,5 +1,6 @@
 use logos::Logos;
 use prism_lang::ast::{CompileError, Parse, Parser, Stmt};
+use prism_lang::instr;
 use prism_lang::token::Token;
 use std::{env, fs, io};
 use string_interner::{DefaultBackend, StringInterner};
@@ -41,13 +42,13 @@ fn stage_2(tokens: &[Token]) -> Result<Vec<Stmt>, CompileError> {
 fn main() -> Result<(), io::Error> {
     println!("Prism!");
 
-    let pathname = env::args()
-        .nth(1)
-        .expect("Please provide a path to the script.");
-    let content = fs::read_to_string(pathname)?;
+    // let pathname = env::args()
+    //     .nth(1)
+    //     .expect("Please provide a path to the script.");
+    // let content = fs::read_to_string(pathname)?;
 
-    let (tokens, interner) = stage_1(&content);
-    let program = stage_2(&tokens).unwrap();
+    // let (tokens, interner) = stage_1(&content);
+    // let program = stage_2(&tokens).unwrap();
 
     Ok(())
 }

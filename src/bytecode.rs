@@ -1,39 +1,103 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt};
 
-use gc::{Finalize, Gc, Trace};
+use gc::{unsafe_empty_trace, Finalize, Gc, Trace};
 
-#[derive(Clone, PartialEq, Eq, Debug, Trace, Finalize)]
-pub enum Instr {
-    Copy { dest: u16, src: u16 },
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[repr(u16)]
+pub enum InstrKind {
+    Copy,
 
-    LoadConst { dest: u16, index: u16 },
-    LoadGlobal { dest: u16, index: u16 },
-    StoreGlobal { src: u16, index: u16 },
+    LoadConst,
+    LoadGlobal,
+    StoreGlobal,
 
-    OpAdd { dest: u16, op1: u16, op2: u16 },
-    OpMinus { dest: u16, op1: u16, op2: u16 },
-    OpMultiply { dest: u16, op1: u16, op2: u16 },
-    OpDivide { dest: u16, op1: u16, op2: u16 },
+    OpAdd,
+    OpMinus,
+    OpMultiply,
+    OpDivide,
 
-    OpAnd { dest: u16, op1: u16, op2: u16 },
-    OpOr { dest: u16, op1: u16, op2: u16 },
-    OpNot { dest: u16, op1: u16 },
+    OpAnd,
+    OpOr,
+    OpNot,
 
-    CmpEqual { dest: u16, op1: u16, op2: u16 },
-    CmpNotEqual { dest: u16, op1: u16, op2: u16 },
-    CmpGreater { dest: u16, op1: u16, op2: u16 },
-    CmpLess { dest: u16, op1: u16, op2: u16 },
-    CmpGreaterOrEqual { dest: u16, op1: u16, op2: u16 },
-    CmpLessOrEqual { dest: u16, op1: u16, op2: u16 },
+    CmpEqual,
+    CmpNotEqual,
+    CmpGreater,
+    CmpLess,
+    CmpGreaterOrEqual,
+    CmpLessOrEqual,
 
-    Jump { dest: u16 },
-    JumpIf { dest: u16, op: u16 },
+    Jump,
+    JumpIf,
 
-    PackTuple { dest: u16, src: u16, len: u16 },
-    UnpackTuple { src: u16, dest: u16, len: u16 },
+    PackTuple,
+    UnpackTuple,
 
-    Call { func: u16, src: u16, arg_count: u16 },
-    Return { src: u16 },
+    Call,
+    Return,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Finalize)]
+pub struct Instr(u64);
+
+unsafe impl Trace for Instr {
+    unsafe_empty_trace!();
+}
+
+impl Instr {
+    pub fn new_1(kind: InstrKind, a1: u16) -> Self {
+        Self((kind as u64) | ((a1 as u64) << 16))
+    }
+
+    pub fn new_2(kind: InstrKind, a1: u16, a2: u16) -> Self {
+        Self((kind as u64) | ((a1 as u64) << 16) | ((a2 as u64) << 32))
+    }
+
+    pub fn new_3(kind: InstrKind, a1: u16, a2: u16, a3: u16) -> Self {
+        Self((kind as u64) | ((a1 as u64) << 16) | ((a2 as u64) << 32) | ((a3 as u64) << 48))
+    }
+
+    pub fn kind(self) -> InstrKind {
+        unsafe { std::mem::transmute(self.0 as u16) }
+    }
+
+    pub fn a1(self) -> u16 {
+        (self.0 >> 16) as u16
+    }
+
+    pub fn a2(self) -> u16 {
+        (self.0 >> 32) as u16
+    }
+
+    pub fn a3(self) -> u16 {
+        (self.0 >> 48) as u16
+    }
+}
+
+impl fmt::Debug for Instr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{:?}({}, {}, {})",
+            self.kind(),
+            self.a1(),
+            self.a2(),
+            self.a3()
+        )
+    }
+}
+
+#[macro_export]
+macro_rules! instr {
+    ($kind: ident, $a1: expr) => {
+        $crate::bytecode::Instr::new_1($crate::bytecode::InstrKind::$kind, $a1)
+    };
+    ($kind: ident, $a1: expr, $a2: expr) => {
+        $crate::bytecode::Instr::new_2($crate::bytecode::InstrKind::$kind, $a1, $a2)
+    };
+    ($kind: ident, $a1: expr, $a2: expr, $a3: expr) => {
+        $crate::bytecode::Instr::new_3($crate::bytecode::InstrKind::$kind, $a1, $a2, $a3)
+    };
 }
 
 #[derive(Clone, Debug, PartialEq, Trace, Finalize)]
@@ -225,8 +289,8 @@ impl CallFrame {
         }
     }
 
-    pub fn fetch_instr(&self) -> &Instr {
-        &self.code_obj.code[self.ip as usize]
+    pub fn fetch_instr(&self) -> Instr {
+        self.code_obj.code[self.ip as usize]
     }
 
     pub fn get_slot(&self, index: u16) -> &Value {
@@ -254,158 +318,170 @@ impl Vm {
 
         let frame = self.frames.last_mut().unwrap();
 
-        let instr = frame.fetch_instr().clone();
+        let instr = frame.fetch_instr();
         frame.ip += 1;
 
-        match instr {
-            Instr::Copy { dest, src } => {
-                *frame.get_mut_slot(dest) = frame.get_slot(src).clone();
+        match instr.kind() {
+            InstrKind::Copy => {
+                *frame.get_mut_slot(instr.a1()) = frame.get_slot(instr.a2()).clone();
             }
 
-            Instr::LoadConst { dest, index } => {
-                *frame.get_mut_slot(dest) = frame.code_obj.consts[index as usize].clone();
+            InstrKind::LoadConst => {
+                *frame.get_mut_slot(instr.a1()) =
+                    frame.code_obj.consts[instr.a2() as usize].clone();
             }
 
-            Instr::LoadGlobal { dest, index } => {
-                let name = &frame.code_obj.global_names[index as usize];
+            InstrKind::LoadGlobal => {
+                let name = &frame.code_obj.global_names[instr.a2() as usize];
 
-                *frame.get_mut_slot(dest) =
+                *frame.get_mut_slot(instr.a1()) =
                     self.globals.get(name).expect("No global name!").clone();
             }
 
-            Instr::StoreGlobal { src, index } => {
-                let name = &frame.code_obj.global_names[index as usize];
+            InstrKind::StoreGlobal => {
+                let name = &frame.code_obj.global_names[instr.a1() as usize];
 
                 self.globals
-                    .insert(name.clone(), frame.get_slot(src).clone());
+                    .insert(name.clone(), frame.get_slot(instr.a2()).clone());
             }
 
-            Instr::OpAdd { dest, op1, op2 } => {
-                *frame.get_mut_slot(dest) = Value::op_add(frame.get_slot(op1), frame.get_slot(op2));
+            InstrKind::OpAdd => {
+                *frame.get_mut_slot(instr.a1()) =
+                    Value::op_add(frame.get_slot(instr.a2()), frame.get_slot(instr.a3()));
             }
 
-            Instr::OpMinus { dest, op1, op2 } => {
-                *frame.get_mut_slot(dest) =
-                    Value::op_minus(frame.get_slot(op1), frame.get_slot(op2));
+            InstrKind::OpMinus => {
+                *frame.get_mut_slot(instr.a1()) =
+                    Value::op_minus(frame.get_slot(instr.a2()), frame.get_slot(instr.a3()));
             }
 
-            Instr::OpMultiply { dest, op1, op2 } => {
-                *frame.get_mut_slot(dest) =
-                    Value::op_multiply(frame.get_slot(op1), frame.get_slot(op2));
+            InstrKind::OpMultiply => {
+                *frame.get_mut_slot(instr.a1()) =
+                    Value::op_multiply(frame.get_slot(instr.a2()), frame.get_slot(instr.a3()));
             }
 
-            Instr::OpDivide { dest, op1, op2 } => {
-                *frame.get_mut_slot(dest) =
-                    Value::op_divide(frame.get_slot(op1), frame.get_slot(op2));
+            InstrKind::OpDivide => {
+                *frame.get_mut_slot(instr.a1()) =
+                    Value::op_divide(frame.get_slot(instr.a2()), frame.get_slot(instr.a3()));
             }
 
-            Instr::OpAnd { dest, op1, op2 } => {
-                *frame.get_mut_slot(dest) =
-                    Value::Bool(Value::op_and(frame.get_slot(op1), frame.get_slot(op2)));
-            }
-
-            Instr::OpOr { dest, op1, op2 } => {
-                *frame.get_mut_slot(dest) =
-                    Value::Bool(Value::op_or(frame.get_slot(op1), frame.get_slot(op2)));
-            }
-
-            Instr::OpNot { dest, op1 } => {
-                *frame.get_mut_slot(dest) = Value::Bool(Value::op_not(frame.get_slot(op1)));
-            }
-
-            Instr::CmpEqual { dest, op1, op2 } => {
-                *frame.get_mut_slot(dest) =
-                    Value::Bool(Value::cmp_equal(frame.get_slot(op1), frame.get_slot(op2)));
-            }
-
-            Instr::CmpNotEqual { dest, op1, op2 } => {
-                *frame.get_mut_slot(dest) = Value::Bool(Value::cmp_not_equal(
-                    frame.get_slot(op1),
-                    frame.get_slot(op2),
+            InstrKind::OpAnd => {
+                *frame.get_mut_slot(instr.a1()) = Value::Bool(Value::op_and(
+                    frame.get_slot(instr.a2()),
+                    frame.get_slot(instr.a3()),
                 ));
             }
 
-            Instr::CmpGreater { dest, op1, op2 } => {
-                *frame.get_mut_slot(dest) =
-                    Value::Bool(Value::cmp_greater(frame.get_slot(op1), frame.get_slot(op2)));
-            }
-
-            Instr::CmpLess { dest, op1, op2 } => {
-                *frame.get_mut_slot(dest) =
-                    Value::Bool(Value::cmp_less(frame.get_slot(op1), frame.get_slot(op2)));
-            }
-
-            Instr::CmpGreaterOrEqual { dest, op1, op2 } => {
-                *frame.get_mut_slot(dest) = Value::Bool(Value::cmp_greater_or_equal(
-                    frame.get_slot(op1),
-                    frame.get_slot(op2),
+            InstrKind::OpOr => {
+                *frame.get_mut_slot(instr.a1()) = Value::Bool(Value::op_or(
+                    frame.get_slot(instr.a2()),
+                    frame.get_slot(instr.a3()),
                 ));
             }
 
-            Instr::CmpLessOrEqual { dest, op1, op2 } => {
-                *frame.get_mut_slot(dest) = Value::Bool(Value::cmp_less_or_equal(
-                    frame.get_slot(op1),
-                    frame.get_slot(op2),
+            InstrKind::OpNot => {
+                *frame.get_mut_slot(instr.a1()) =
+                    Value::Bool(Value::op_not(frame.get_slot(instr.a2())));
+            }
+
+            InstrKind::CmpEqual => {
+                *frame.get_mut_slot(instr.a1()) = Value::Bool(Value::cmp_equal(
+                    frame.get_slot(instr.a2()),
+                    frame.get_slot(instr.a3()),
                 ));
             }
 
-            Instr::Jump { dest } => {
-                frame.ip = dest;
+            InstrKind::CmpNotEqual => {
+                *frame.get_mut_slot(instr.a1()) = Value::Bool(Value::cmp_not_equal(
+                    frame.get_slot(instr.a2()),
+                    frame.get_slot(instr.a3()),
+                ));
             }
 
-            Instr::JumpIf { dest, op } => {
-                if frame.get_slot(op).is_truthy() {
-                    frame.ip = dest;
+            InstrKind::CmpGreater => {
+                *frame.get_mut_slot(instr.a1()) = Value::Bool(Value::cmp_greater(
+                    frame.get_slot(instr.a2()),
+                    frame.get_slot(instr.a3()),
+                ));
+            }
+
+            InstrKind::CmpLess => {
+                *frame.get_mut_slot(instr.a1()) = Value::Bool(Value::cmp_less(
+                    frame.get_slot(instr.a2()),
+                    frame.get_slot(instr.a3()),
+                ));
+            }
+
+            InstrKind::CmpGreaterOrEqual => {
+                *frame.get_mut_slot(instr.a1()) = Value::Bool(Value::cmp_greater_or_equal(
+                    frame.get_slot(instr.a2()),
+                    frame.get_slot(instr.a3()),
+                ));
+            }
+
+            InstrKind::CmpLessOrEqual => {
+                *frame.get_mut_slot(instr.a1()) = Value::Bool(Value::cmp_less_or_equal(
+                    frame.get_slot(instr.a2()),
+                    frame.get_slot(instr.a3()),
+                ));
+            }
+
+            InstrKind::Jump => {
+                frame.ip = instr.a1();
+            }
+
+            InstrKind::JumpIf => {
+                if frame.get_slot(instr.a2()).is_truthy() {
+                    frame.ip = instr.a1();
                 }
             }
 
-            Instr::PackTuple { dest, src, len } => {
-                let tuple: Box<[Value]> = (&frame.stack[src as usize..(src + len) as usize]).into();
-                *frame.get_mut_slot(dest) = Value::Tuple(Gc::new(tuple));
+            InstrKind::PackTuple => {
+                let tuple: Box<[Value]> =
+                    (&frame.stack[instr.a2() as usize..(instr.a2() + instr.a3()) as usize]).into();
+                *frame.get_mut_slot(instr.a1()) = Value::Tuple(Gc::new(tuple));
             }
 
-            Instr::UnpackTuple { src, dest, len } => {
-                let Value::Tuple(tuple) = frame.get_slot(src) else {
+            InstrKind::UnpackTuple => {
+                let Value::Tuple(tuple) = frame.get_slot(instr.a2()) else {
                     panic!("Trying to unpack non-tuple");
                 };
                 let tuple = Gc::clone(tuple);
 
-                if len as usize != tuple.len() {
+                if instr.a3() as usize != tuple.len() {
                     panic!("Tuple len not match.");
                 }
 
-                frame.stack[dest as usize..(dest + len) as usize].clone_from_slice(&tuple);
+                frame.stack[instr.a1() as usize..(instr.a1() + instr.a3()) as usize]
+                    .clone_from_slice(&tuple);
             }
 
-            Instr::Call {
-                func,
-                src,
-                arg_count,
-            } => {
-                let Value::Callable(callable) = frame.get_slot(func) else {
+            InstrKind::Call => {
+                let Value::Callable(callable) = frame.get_slot(instr.a1()) else {
                     panic!("Trying to call non-callable.");
                 };
 
-                let args = &frame.stack[(src + 1) as usize..(src + 1 + arg_count) as usize];
+                let args =
+                    &frame.stack[(instr.a2() + 1) as usize..(instr.a2() + 1 + instr.a3()) as usize];
 
                 match callable {
                     // If we are calling a native function, we don't need to create a call frame
                     Callable::Native(native_func) => {
-                        *frame.get_mut_slot(src) = native_func(args);
+                        *frame.get_mut_slot(instr.a2()) = native_func(args);
                     }
 
                     Callable::Func(code_obj) => {
                         let new_frame = CallFrame::new(Gc::clone(code_obj), args);
 
-                        frame.ret_slot = src;
+                        frame.ret_slot = instr.a2();
 
                         self.frames.push(new_frame);
                     }
                 }
             }
 
-            Instr::Return { src } => {
-                let ret_val = frame.get_slot(src).clone();
+            InstrKind::Return => {
+                let ret_val = frame.get_slot(instr.a1()).clone();
 
                 self.frames.pop();
 
@@ -413,7 +489,6 @@ impl Vm {
                     *old_frame.get_mut_slot(old_frame.ret_slot) = ret_val;
                 } else {
                     self.result = Some(ret_val);
-                    return;
                 }
             }
         }

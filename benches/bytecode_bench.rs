@@ -1,39 +1,33 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use gc::Gc;
 use prism_lang::{
-    bytecode::{CallFrame, Callable, CodeObject, Instr, Value, Vm},
+    bytecode::{CallFrame, Callable, CodeObject, Value, Vm},
+    instr,
     native_func::NATIVE_FUNCS,
 };
 use std::{collections::HashMap, hint::black_box};
 
 fn fib_recursive(n: f64) {
     let fib = Gc::new(CodeObject {
-        #[rustfmt::skip]
         code: Box::new([
             // load 1 & 2
-            Instr::LoadConst { dest: 1, index: 0 },
-            Instr::LoadConst { dest: 2, index: 1 },
-
+            instr!(LoadConst, 1, 0),
+            instr!(LoadConst, 2, 1),
             // if n <= 1, return n
-            Instr::CmpGreater { dest: 3, op1: 0, op2: 1 },
-            Instr::JumpIf { dest: 5, op: 3 },
-
-            Instr::Return { src: 0 },
-
+            instr!(CmpGreater, 3, 0, 1),
+            instr!(JumpIf, 5, 3),
+            instr!(Return, 0),
             // load fib
-            Instr::LoadGlobal { dest: 3, index: 0 },
-
+            instr!(LoadGlobal, 3, 0),
             // call fib(n - 1)
-            Instr::OpMinus { dest: 5, op1: 0, op2: 1 },
-            Instr::Call { func: 3, src: 4, arg_count: 1 },
-
+            instr!(OpMinus, 5, 0, 1),
+            instr!(Call, 3, 4, 1),
             // call fib(n - 2)
-            Instr::OpMinus { dest: 7, op1: 0, op2: 2 },
-            Instr::Call { func: 3, src: 6, arg_count: 1 },
-
+            instr!(OpMinus, 7, 0, 2),
+            instr!(Call, 3, 6, 1),
             // return fib(n - 1) + fib(n - 2)
-            Instr::OpAdd { dest: 0, op1: 4, op2: 6 },
-            Instr::Return { src: 0 },
+            instr!(OpAdd, 0, 4, 6),
+            instr!(Return, 0),
         ]),
         consts: Box::new([Value::Number(1.0), Value::Number(2.0)]),
         global_names: Box::new(["fib".into()]),
@@ -69,30 +63,25 @@ fn fib_recursive(n: f64) {
 
 fn fib_iterative(n: f64) {
     let fib = Gc::new(CodeObject {
-        #[rustfmt::skip]
         code: Box::new([
             // 1: a, 2: b, 3: c, 4: i
-
-            Instr::LoadConst { dest: 1, index: 0 },
-            Instr::LoadConst { dest: 2, index: 1 },
-            Instr::LoadConst { dest: 4, index: 2 },
-            Instr::LoadConst { dest: 5, index: 1 },
-
+            instr!(LoadConst, 1, 0),
+            instr!(LoadConst, 2, 1),
+            instr!(LoadConst, 4, 2),
+            instr!(LoadConst, 5, 1),
             // c = a + b
             // a = b
             // b = c
-            Instr::OpAdd { dest: 3, op1: 1, op2: 2 },
-            Instr::Copy { dest: 1, src: 2 },
-            Instr::Copy { dest: 2, src: 3 },
-
+            instr!(OpAdd, 3, 1, 2),
+            instr!(Copy, 1, 2),
+            instr!(Copy, 2, 3),
             // i++
             // if i <= n, loop again
-            Instr::OpAdd { dest: 4, op1: 4, op2: 5 },
-            Instr::CmpLessOrEqual { dest: 6, op1: 4, op2: 0 },
-            Instr::JumpIf { dest: 4, op: 6 },
-
+            instr!(OpAdd, 4, 4, 5),
+            instr!(CmpLessOrEqual, 6, 4, 0),
+            instr!(JumpIf, 4, 6),
             // return b
-            Instr::Return { src: 2 },
+            instr!(Return, 2),
         ]),
         consts: Box::new([Value::Number(1.0), Value::Number(1.0), Value::Number(2.0)]),
         global_names: Box::new(["fib".into()]),
