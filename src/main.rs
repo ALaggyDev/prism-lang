@@ -1,16 +1,8 @@
-#![allow(non_local_definitions)] // for gc-derive in miri run
-
-use std::{env, fs, io};
-
-use ast::{CompileError, Parse, Parser, Stmt};
 use logos::Logos;
+use prism_lang::ast::{CompileError, Parse, Parser, Stmt};
+use prism_lang::token::Token;
+use std::{env, fs, io};
 use string_interner::{DefaultBackend, StringInterner};
-use token::Token;
-
-pub mod ast;
-pub mod bytecode;
-pub mod native_func;
-pub mod token;
 
 fn stage_1(program: &str) -> (Vec<Token>, StringInterner<DefaultBackend>) {
     let mut lex = Token::lexer_with_extras(program, StringInterner::new());

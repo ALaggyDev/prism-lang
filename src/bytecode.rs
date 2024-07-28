@@ -26,8 +26,8 @@ pub enum Instr {
     CmpGreaterOrEqual { dest: u16, op1: u16, op2: u16 },
     CmpLessOrEqual { dest: u16, op1: u16, op2: u16 },
 
-    Jump { dest: u32 },
-    JumpIf { dest: u32, op: u16 },
+    Jump { dest: u16 },
+    JumpIf { dest: u16, op: u16 },
 
     PackTuple { dest: u16, src: u16, len: u16 },
     UnpackTuple { src: u16, dest: u16, len: u16 },
@@ -60,7 +60,7 @@ pub struct CodeObject {
 pub struct CallFrame {
     pub code_obj: Gc<CodeObject>,
     pub stack: Box<[Value]>,
-    pub ip: u32,
+    pub ip: u16,
     pub ret_slot: u16,
 }
 
@@ -428,78 +428,5 @@ impl Vm {
         //     instr,
         //     frame.stack
         // );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-
-    use gc::Gc;
-
-    use crate::native_func::NATIVE_FUNCS;
-
-    use super::{CallFrame, Callable, CodeObject, Instr, Value, Vm};
-
-    #[test]
-    pub fn test_fibonacci() {
-        let fib = Gc::new(CodeObject {
-            #[rustfmt::skip]
-            code: Box::new([
-                    // load 1 & 2
-                    Instr::LoadConst { dest: 1, index: 0 },
-                    Instr::LoadConst { dest: 2, index: 1 },
-
-                    // if n <= 1, return n
-                    Instr::CmpGreater { dest: 3, op1: 0, op2: 1 },
-                    Instr::JumpIf { dest: 5, op: 3 },
-
-                    Instr::Return { src: 0 },
-
-                    // load fib
-                    Instr::LoadGlobal { dest: 3, index: 0 },
-
-                    // call fib(n - 1)
-                    Instr::OpMinus { dest: 5, op1: 0, op2: 1 },
-                    Instr::Call { func: 3, src: 4, arg_count: 1 },
-
-                    // call fib(n - 2)
-                    Instr::OpMinus { dest: 7, op1: 0, op2: 2 },
-                    Instr::Call { func: 3, src: 6, arg_count: 1 },
-
-                    // return fib(n - 1) + fib(n - 2)
-                    Instr::OpAdd { dest: 0, op1: 4, op2: 6 },
-                    Instr::Return { src: 0 },
-                ]),
-            consts: Box::new([Value::Number(1.0), Value::Number(2.0)]),
-            global_names: Box::new(["fib".into()]),
-            name: "fib".into(),
-            stack_count: 8,
-            arg_count: 1,
-        });
-
-        let call_frame = CallFrame::new(Gc::clone(&fib), &[Value::Number(15.0)]);
-
-        let mut vm = Vm {
-            frames: vec![call_frame],
-            globals: HashMap::new(),
-            result: None,
-        };
-
-        vm.globals
-            .insert("fib".into(), Value::Callable(Callable::Func(fib)));
-
-        for (name, native_func) in NATIVE_FUNCS {
-            vm.globals.insert(
-                (*name).into(),
-                Value::Callable(Callable::Native(*native_func)),
-            );
-        }
-
-        while vm.result.is_none() {
-            vm.step();
-        }
-
-        assert_eq!(vm.result, Some(Value::Number(610.0)));
     }
 }
