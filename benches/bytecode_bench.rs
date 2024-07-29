@@ -1,14 +1,14 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use gc::Gc;
 use prism_lang::{
-    bytecode::{CallFrame, Callable, CodeObject, Value, Vm},
-    instr,
-    native_func::NATIVE_FUNCS,
+    bytecode::{Callable, CodeObject, Value, Vm},
+    compiler::compile,
+    instr, stage_1, stage_2,
 };
-use std::{collections::HashMap, hint::black_box};
+use std::hint::black_box;
 
-fn fib_recursive(n: f64) {
-    let fib = Gc::new(CodeObject {
+fn fib_recursive_normal() -> Gc<CodeObject> {
+    Gc::new(CodeObject {
         code: Box::new([
             // load 1 & 2
             instr!(LoadConst, 1, 0),
@@ -31,38 +31,13 @@ fn fib_recursive(n: f64) {
         ]),
         consts: Box::new([Value::Number(1.0), Value::Number(2.0)]),
         global_names: Box::new(["fib".into()]),
-        name: "fib".into(),
         stack_count: 8,
         arg_count: 1,
-    });
-
-    let call_frame = CallFrame::new(Gc::clone(&fib), &[Value::Number(n)]);
-
-    let mut vm = Vm {
-        frames: vec![call_frame],
-        globals: HashMap::new(),
-        result: None,
-    };
-
-    vm.globals
-        .insert("fib".into(), Value::Callable(Callable::Func(fib)));
-
-    for (name, native_func) in NATIVE_FUNCS {
-        vm.globals.insert(
-            (*name).into(),
-            Value::Callable(Callable::Native(*native_func)),
-        );
-    }
-
-    while vm.result.is_none() {
-        vm.step();
-    }
-
-    black_box(vm.result);
+    })
 }
 
-fn fib_iterative(n: f64) {
-    let fib = Gc::new(CodeObject {
+fn fib_iterative_normal() -> Gc<CodeObject> {
+    Gc::new(CodeObject {
         code: Box::new([
             // 1: a, 2: b, 3: c, 4: i
             instr!(LoadConst, 1, 0),
@@ -84,29 +59,56 @@ fn fib_iterative(n: f64) {
             instr!(Return, 2),
         ]),
         consts: Box::new([Value::Number(1.0), Value::Number(1.0), Value::Number(2.0)]),
-        global_names: Box::new(["fib".into()]),
-        name: "fib".into(),
+        global_names: Box::new([]),
         stack_count: 7,
         arg_count: 1,
-    });
+    })
+}
 
-    let call_frame = CallFrame::new(Gc::clone(&fib), &[Value::Number(n)]);
+fn fib_recursive_compiled() -> Gc<CodeObject> {
+    let content = r#"
+    fn fib(n) {
+        if (n <= 1) {
+            return n;
+        }
 
-    let mut vm = Vm {
-        frames: vec![call_frame],
-        globals: HashMap::new(),
-        result: None,
-    };
+        return fib(n - 1) + fib(n - 2);
+    }
+    "#;
+
+    let (tokens, interner) = stage_1(&content);
+    let program = stage_2(&tokens).unwrap();
+
+    Gc::new(compile(&program, &interner).unwrap())
+}
+
+fn fib_iterative_compiled() -> Gc<CodeObject> {
+    let content = r#"
+    fn fib(n) {
+        let a = 0;
+        let b = 1;
+        let i = 2;
+        while (i <= n) {
+            let c = a + b;
+            a = b;
+            b = c;
+            i = i + 1;
+        }
+        return b;
+    }
+    "#;
+
+    let (tokens, interner) = stage_1(&content);
+    let program = stage_2(&tokens).unwrap();
+
+    Gc::new(compile(&program, &interner).unwrap())
+}
+
+fn run(code_object: Gc<CodeObject>, n: f64) {
+    let mut vm = Vm::new_from_code_object(Gc::clone(&code_object), &[Value::Number(n)], true);
 
     vm.globals
-        .insert("fib".into(), Value::Callable(Callable::Func(fib)));
-
-    for (name, native_func) in NATIVE_FUNCS {
-        vm.globals.insert(
-            (*name).into(),
-            Value::Callable(Callable::Native(*native_func)),
-        );
-    }
+        .insert("fib".into(), Value::Callable(Callable::Func(code_object)));
 
     while vm.result.is_none() {
         vm.step();
@@ -115,9 +117,24 @@ fn fib_iterative(n: f64) {
     black_box(vm.result);
 }
 
-pub fn fib_benchmark(c: &mut Criterion) {
-    c.bench_function("fib recursive 25", |b| b.iter(|| fib_recursive(25.0)));
-    c.bench_function("fib iterative 100", |b| b.iter(|| fib_iterative(100.0)));
+fn fib_benchmark(c: &mut Criterion) {
+    let fib_recu_normal = fib_recursive_normal();
+    let fib_iter_normal = fib_iterative_normal();
+    let fib_recu_compiled = fib_recursive_compiled();
+    let fib_iter_compiled = fib_iterative_compiled();
+
+    c.bench_function("fib recursive 25", |b| {
+        b.iter(|| run(Gc::clone(&fib_recu_normal), 25.0))
+    });
+    c.bench_function("fib iterative 100", |b| {
+        b.iter(|| run(Gc::clone(&fib_iter_normal), 100.0))
+    });
+    c.bench_function("fib recursive 25 compiled", |b| {
+        b.iter(|| run(Gc::clone(&fib_recu_compiled), 25.0))
+    });
+    c.bench_function("fib iterative 100 compiled", |b| {
+        b.iter(|| run(Gc::clone(&fib_iter_compiled), 100.0))
+    });
 }
 
 criterion_group!(benches, fib_benchmark);

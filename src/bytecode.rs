@@ -2,6 +2,8 @@ use std::{collections::HashMap, fmt};
 
 use gc::{unsafe_empty_trace, Finalize, Gc, Trace};
 
+use crate::native_func::NATIVE_FUNCS;
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(u16)]
 pub enum InstrKind {
@@ -16,6 +18,8 @@ pub enum InstrKind {
     OpMultiply,
     OpDivide,
 
+    OpNegate,
+
     OpAnd,
     OpOr,
     OpNot,
@@ -29,6 +33,7 @@ pub enum InstrKind {
 
     Jump,
     JumpIf,
+    JumpNotIf,
 
     PackTuple,
     UnpackTuple,
@@ -115,7 +120,6 @@ pub struct CodeObject {
     pub code: Box<[Instr]>,
     pub consts: Box<[Value]>,
     pub global_names: Box<[Box<str>]>,
-    pub name: Box<str>,
     pub stack_count: u16,
     pub arg_count: u16,
 }
@@ -182,6 +186,13 @@ impl Value {
     pub fn op_divide(&self, rhs: &Value) -> Value {
         match (self, rhs) {
             (Value::Number(op1), Value::Number(op2)) => Value::Number(op1 / op2),
+            _ => panic!("Unsupported pair."),
+        }
+    }
+
+    pub fn op_negate(&self) -> Value {
+        match self {
+            Value::Number(op) => Value::Number(-op),
             _ => panic!("Unsupported pair."),
         }
     }
@@ -266,7 +277,7 @@ impl Value {
 
     pub fn cmp_less_or_equal(&self, rhs: &Value) -> bool {
         match (self, rhs) {
-            (Value::Number(op1), Value::Number(op2)) => op1 < op2,
+            (Value::Number(op1), Value::Number(op2)) => op1 <= op2,
             _ => panic!("Unsupported pair."),
         }
     }
@@ -303,6 +314,31 @@ impl CallFrame {
 }
 
 impl Vm {
+    pub fn new_from_code_object(
+        code_object: Gc<CodeObject>,
+        args: &[Value],
+        use_builtin: bool,
+    ) -> Self {
+        let call_frame = CallFrame::new(code_object, args);
+
+        let mut vm = Vm {
+            frames: vec![call_frame],
+            globals: HashMap::new(),
+            result: None,
+        };
+
+        if use_builtin {
+            for (name, native_func) in NATIVE_FUNCS {
+                vm.globals.insert(
+                    (*name).into(),
+                    Value::Callable(Callable::Native(*native_func)),
+                );
+            }
+        }
+
+        vm
+    }
+
     pub fn get_cur_frame(&self) -> &CallFrame {
         self.frames.last().unwrap()
     }
@@ -363,6 +399,10 @@ impl Vm {
             InstrKind::OpDivide => {
                 *frame.get_mut_slot(instr.a1()) =
                     Value::op_divide(frame.get_slot(instr.a2()), frame.get_slot(instr.a3()));
+            }
+
+            InstrKind::OpNegate => {
+                *frame.get_mut_slot(instr.a1()) = Value::op_negate(frame.get_slot(instr.a2()));
             }
 
             InstrKind::OpAnd => {
@@ -436,6 +476,12 @@ impl Vm {
                 }
             }
 
+            InstrKind::JumpNotIf => {
+                if !frame.get_slot(instr.a2()).is_truthy() {
+                    frame.ip = instr.a1();
+                }
+            }
+
             InstrKind::PackTuple => {
                 let tuple: Box<[Value]> =
                     (&frame.stack[instr.a2() as usize..(instr.a2() + instr.a3()) as usize]).into();
@@ -489,6 +535,7 @@ impl Vm {
                     *old_frame.get_mut_slot(old_frame.ret_slot) = ret_val;
                 } else {
                     self.result = Some(ret_val);
+                    // return;
                 }
             }
         }
@@ -497,8 +544,7 @@ impl Vm {
         // let frame = self.get_cur_frame();
 
         // println!(
-        //     "{} {} {:?} {:?}",
-        //     frame.code_obj.name,
+        //     "{} {:?} {:?}",
         //     self.frames.len(),
         //     instr,
         //     frame.stack

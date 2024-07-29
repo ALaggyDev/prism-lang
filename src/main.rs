@@ -1,42 +1,8 @@
-use logos::Logos;
-use prism_lang::ast::{CompileError, Parse, Parser, Stmt};
-use prism_lang::token::Token;
+use gc::Gc;
+use prism_lang::bytecode::{Callable, Value, Vm};
+use prism_lang::compiler::compile;
+use prism_lang::{stage_1, stage_2};
 use std::{env, fs, io};
-use string_interner::{DefaultBackend, StringInterner};
-
-fn stage_1(program: &str) -> (Vec<Token>, StringInterner<DefaultBackend>) {
-    let mut lex = Token::lexer_with_extras(program, StringInterner::new());
-
-    let mut tokens = Vec::new();
-    let mut errored = false;
-
-    while let Some(token) = lex.next() {
-        if let Ok(token) = token {
-            tokens.push(token);
-        } else {
-            errored = true;
-            println!("Unknown token at {}..{}.", lex.span().start, lex.span().end);
-        }
-    }
-
-    if errored {
-        panic!("Exit");
-    }
-
-    (tokens, lex.extras)
-}
-
-fn stage_2(tokens: &[Token]) -> Result<Vec<Stmt>, CompileError> {
-    let mut parser = Parser::new(tokens);
-
-    let mut stmts = vec![];
-
-    while !parser.is_at_end() {
-        stmts.push(Stmt::parse(&mut parser)?);
-    }
-
-    Ok(stmts)
-}
 
 fn main() -> Result<(), io::Error> {
     println!("Prism!");
@@ -46,10 +12,24 @@ fn main() -> Result<(), io::Error> {
         .expect("Please provide a path to the script.");
     let content = fs::read_to_string(pathname)?;
 
-    let (tokens, _) = stage_1(&content);
+    let (tokens, interner) = stage_1(&content);
     let program = stage_2(&tokens).unwrap();
 
     println!("{:?}", program);
+
+    let code_object = Gc::new(compile(&program, &interner).unwrap());
+    println!("{:?}", code_object);
+
+    let mut vm = Vm::new_from_code_object(Gc::clone(&code_object), &[Value::Number(30.0)], true);
+
+    vm.globals
+        .insert("fib".into(), Value::Callable(Callable::Func(code_object)));
+
+    while vm.result.is_none() {
+        vm.step();
+    }
+
+    println!("{:?}", vm.result);
 
     Ok(())
 }
