@@ -1,4 +1,3 @@
-use gc::{unsafe_empty_trace, Finalize, Trace};
 use logos::Logos;
 use string_interner::{DefaultBackend, DefaultSymbol, StringInterner};
 
@@ -38,8 +37,6 @@ pub enum Token {
     Return,
     #[token("class")]
     Class,
-    #[token("this")]
-    This,
 
     #[token("=")]
     Assign,
@@ -95,14 +92,10 @@ pub enum Token {
     Eof,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Finalize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ident(pub DefaultSymbol);
 
-unsafe impl Trace for Ident {
-    unsafe_empty_trace!();
-}
-
-#[derive(Clone, Debug, PartialEq, Trace, Finalize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Literal {
     Null,
     Bool(bool),

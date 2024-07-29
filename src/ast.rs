@@ -1,5 +1,3 @@
-use gc::{unsafe_empty_trace, Finalize, Gc, Trace};
-
 use crate::token::{Ident, Literal, Token};
 
 #[derive(Clone, Debug)]
@@ -75,7 +73,7 @@ pub trait Parse: Sized {
     fn parse(parser: &mut Parser) -> Result<Self, CompileError>;
 }
 
-#[derive(Clone, Debug, Trace, Finalize)]
+#[derive(Clone, Debug)]
 pub enum Expr {
     Literal(Literal),
     Variable(Ident),
@@ -84,16 +82,15 @@ pub enum Expr {
     Unary(UnaryOp, Box<Expr>),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Access(Box<Expr>, Ident),
-    This,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Finalize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UnaryOp {
     Negate,
     Not,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Finalize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BinaryOp {
     Assign,
 
@@ -110,14 +107,6 @@ pub enum BinaryOp {
     LessOrEqual,
     And,
     Or,
-}
-
-unsafe impl Trace for UnaryOp {
-    unsafe_empty_trace!();
-}
-
-unsafe impl Trace for BinaryOp {
-    unsafe_empty_trace!();
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -206,7 +195,6 @@ impl Expr {
             Token::Minus => Expr::Unary(UnaryOp::Negate, Box::new(Expr::parse_primary(parser)?)),
             Token::Not => Expr::Unary(UnaryOp::Not, Box::new(Expr::parse_primary(parser)?)),
             Token::Ident(ident) => Expr::Variable(ident),
-            Token::This => Expr::This,
             _ => return Err(CompileError("Unexpected token.".into())),
         };
 
@@ -302,11 +290,11 @@ impl Parse for Expr {
     }
 }
 
-#[derive(Clone, Debug, Trace, Finalize)]
+#[derive(Clone, Debug)]
 pub enum Stmt {
     Expr(Expr),
     Block(Block),
-    Fn(Ident, Gc<FunctionDecl>),
+    Fn(Ident, FuncDecl),
     Let(Ident, Expr),
     If(Box<[(Expr, Block)]>, Option<Block>),
     While(Expr, Block),
@@ -316,21 +304,20 @@ pub enum Stmt {
     Class(ClassDecl),
 }
 
-#[derive(Clone, Debug, Trace, Finalize)]
-pub struct FunctionDecl {
+#[derive(Clone, Debug)]
+pub struct FuncDecl {
     pub parameters: Box<[Ident]>,
     pub block: Block,
 }
 
-#[derive(Clone, Debug, Trace, Finalize)]
+#[derive(Clone, Debug)]
 pub struct ClassDecl {
     pub ident: Ident,
-    pub parent_ident: Option<Ident>,
-    pub methods: Box<[(Ident, Gc<FunctionDecl>)]>,
+    pub methods: Box<[(Ident, FuncDecl)]>,
 }
 
 impl Stmt {
-    fn parse_fn(parser: &mut Parser) -> Result<(Ident, FunctionDecl), CompileError> {
+    fn parse_fn(parser: &mut Parser) -> Result<(Ident, FuncDecl), CompileError> {
         expect_token!(parser, Token::Fn, "Expected fn.");
 
         let ident = Ident::parse(parser)?;
@@ -343,7 +330,7 @@ impl Stmt {
 
         Ok((
             ident,
-            FunctionDecl {
+            FuncDecl {
                 parameters: parameters.into(),
                 block,
             },
@@ -357,7 +344,7 @@ impl Parse for Stmt {
             Token::OpenBrace => Ok(Self::Block(Block::parse(parser)?)),
             Token::Fn => {
                 let decl = Stmt::parse_fn(parser)?;
-                Ok(Self::Fn(decl.0, Gc::new(decl.1)))
+                Ok(Self::Fn(decl.0, decl.1))
             }
             Token::Let => {
                 parser.advance();
@@ -449,14 +436,6 @@ impl Parse for Stmt {
 
                 let ident = Ident::parse(parser)?;
 
-                let parent_ident = if let Token::Colon = parser.peek() {
-                    parser.advance();
-
-                    Some(Ident::parse(parser)?)
-                } else {
-                    None
-                };
-
                 expect_token!(parser, Token::OpenBrace, "Expected opening brace.");
 
                 let mut methods = Vec::new();
@@ -468,12 +447,11 @@ impl Parse for Stmt {
                     }
 
                     let res = Stmt::parse_fn(parser)?;
-                    methods.push((res.0, Gc::new(res.1)));
+                    methods.push((res.0, res.1));
                 }
 
                 Ok(Self::Class(ClassDecl {
                     ident,
-                    parent_ident,
                     methods: methods.into(),
                 }))
             }
@@ -488,7 +466,7 @@ impl Parse for Stmt {
     }
 }
 
-#[derive(Clone, Debug, Trace, Finalize)]
+#[derive(Clone, Debug)]
 pub struct Block(pub Box<[Stmt]>);
 
 impl Parse for Block {

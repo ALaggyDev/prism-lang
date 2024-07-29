@@ -100,7 +100,7 @@ macro_rules! instr {
     };
 }
 
-#[derive(Clone, Debug, PartialEq, Trace, Finalize)]
+#[derive(Clone, Debug, Trace, Finalize)]
 pub enum Value {
     Null,
     Bool(bool),
@@ -110,7 +110,7 @@ pub enum Value {
     Callable(Callable),
 }
 
-#[derive(Clone, Debug, PartialEq, Trace, Finalize)]
+#[derive(Clone, Debug, Trace, Finalize)]
 pub struct CodeObject {
     pub code: Box<[Instr]>,
     pub consts: Box<[Value]>,
@@ -120,7 +120,7 @@ pub struct CodeObject {
     pub arg_count: u16,
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, Debug)]
 pub struct CallFrame {
     pub code_obj: Gc<CodeObject>,
     pub stack: Box<[Value]>,
@@ -130,7 +130,7 @@ pub struct CallFrame {
 
 pub type NativeFunc = fn(args: &[Value]) -> Value;
 
-#[derive(Clone, Debug, PartialEq, Trace, Finalize)]
+#[derive(Clone, Debug, Trace, Finalize)]
 pub enum Callable {
     Native(#[unsafe_ignore_trace] NativeFunc),
     Func(Gc<CodeObject>),
