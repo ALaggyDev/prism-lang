@@ -1,0 +1,14 @@
+fn fib(n) {
+    fn abc(a, b, c) {
+        print(a, b, c);
+    }
+
+    abc(2, 6, 7);
+}
+
+print("Hello world!");
+
+{
+    let value = 2;
+    fib(value);
+}

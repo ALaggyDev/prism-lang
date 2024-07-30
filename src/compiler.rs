@@ -17,6 +17,9 @@ pub struct CompileState<'a> {
     stack_count: u16,
     arg_count: u16,
 
+    is_global: bool,
+    context_count: usize,
+
     interner: &'a StringInterner<DefaultBackend>,
 }
 
@@ -64,12 +67,18 @@ impl<'a> CompileState<'a> {
         None
     }
 
-    pub fn create_context(&self) -> usize {
+    pub fn create_context(&mut self) -> usize {
+        self.context_count = self.context_count + 1;
         self.stack.len()
     }
 
     pub fn delete_context(&mut self, context: usize) {
+        self.context_count = self.context_count - 1;
         self.stack.truncate(context);
+    }
+
+    pub fn at_global(&self) -> bool {
+        self.is_global && self.context_count == 0
     }
 
     pub fn consume(self) -> CodeObject {
@@ -93,6 +102,31 @@ pub fn literal_to_value(lit: &Literal) -> Value {
         Literal::Bool(val) => Value::Bool(*val),
         Literal::Number(val) => Value::Number(*val),
         Literal::String(val) => Value::String(Gc::new(val.clone())),
+    }
+}
+
+pub fn handle_lvalue(
+    state: &mut CompileState,
+    l_expr: &Expr,
+    r_expr: &Expr,
+) -> Result<u16, CompileError> {
+    let r_expr = compile_expr(state, r_expr)?;
+
+    match l_expr {
+        Expr::Variable(ident) => {
+            if let Some(slot) = state.find_ident_in_stack(ident) {
+                // Write to a local variable
+                state.add_instr(instr!(Copy, slot, r_expr));
+                Ok(slot)
+            } else {
+                // Else, write to a global variable
+                let global_slot = state.add_global(*ident);
+
+                state.add_instr(instr!(StoreGlobal, global_slot, r_expr));
+                Ok(r_expr)
+            }
+        }
+        _ => panic!("Not a l-value."),
     }
 }
 
@@ -159,36 +193,31 @@ pub fn compile_expr(state: &mut CompileState, expr: &Expr) -> Result<u16, Compil
             Ok(slot)
         }
 
-        Expr::Binary(op, g_expr_1, g_expr_2) => {
-            let g_slot_1 = compile_expr(state, g_expr_1)?;
-            let g_slot_2 = compile_expr(state, g_expr_2)?;
+        Expr::Binary(BinaryOp::Assign, l_expr, r_expr) => handle_lvalue(state, l_expr, r_expr),
 
-            if let BinaryOp::Assign = op {
-                // TODO: Assignment is incomplete!
-                state.add_instr(instr!(Copy, g_slot_1, g_slot_2));
+        Expr::Binary(op, l_expr, r_expr) => {
+            let l_expr = compile_expr(state, l_expr)?;
+            let r_expr = compile_expr(state, r_expr)?;
 
-                Ok(g_slot_1)
-            } else {
-                let slot = state.add_slot(None);
+            let slot = state.add_slot(None);
 
-                state.add_instr(match op {
-                    BinaryOp::Assign => unreachable!(),
-                    BinaryOp::Add => instr!(OpAdd, slot, g_slot_1, g_slot_2),
-                    BinaryOp::Minus => instr!(OpMinus, slot, g_slot_1, g_slot_2),
-                    BinaryOp::Multiply => instr!(OpMultiply, slot, g_slot_1, g_slot_2),
-                    BinaryOp::Divide => instr!(OpDivide, slot, g_slot_1, g_slot_2),
-                    BinaryOp::Equal => instr!(CmpEqual, slot, g_slot_1, g_slot_2),
-                    BinaryOp::NotEqual => instr!(CmpNotEqual, slot, g_slot_1, g_slot_2),
-                    BinaryOp::Greater => instr!(CmpGreater, slot, g_slot_1, g_slot_2),
-                    BinaryOp::Less => instr!(CmpLess, slot, g_slot_1, g_slot_2),
-                    BinaryOp::GreaterOrEqual => instr!(CmpGreaterOrEqual, slot, g_slot_1, g_slot_2),
-                    BinaryOp::LessOrEqual => instr!(CmpLessOrEqual, slot, g_slot_1, g_slot_2),
-                    BinaryOp::And => instr!(OpAnd, slot, g_slot_1, g_slot_2),
-                    BinaryOp::Or => instr!(OpOr, slot, g_slot_1, g_slot_2),
-                });
+            state.add_instr(match op {
+                BinaryOp::Assign => unreachable!(),
+                BinaryOp::Add => instr!(OpAdd, slot, l_expr, r_expr),
+                BinaryOp::Minus => instr!(OpMinus, slot, l_expr, r_expr),
+                BinaryOp::Multiply => instr!(OpMultiply, slot, l_expr, r_expr),
+                BinaryOp::Divide => instr!(OpDivide, slot, l_expr, r_expr),
+                BinaryOp::Equal => instr!(CmpEqual, slot, l_expr, r_expr),
+                BinaryOp::NotEqual => instr!(CmpNotEqual, slot, l_expr, r_expr),
+                BinaryOp::Greater => instr!(CmpGreater, slot, l_expr, r_expr),
+                BinaryOp::Less => instr!(CmpLess, slot, l_expr, r_expr),
+                BinaryOp::GreaterOrEqual => instr!(CmpGreaterOrEqual, slot, l_expr, r_expr),
+                BinaryOp::LessOrEqual => instr!(CmpLessOrEqual, slot, l_expr, r_expr),
+                BinaryOp::And => instr!(OpAnd, slot, l_expr, r_expr),
+                BinaryOp::Or => instr!(OpOr, slot, l_expr, r_expr),
+            });
 
-                Ok(slot)
-            }
+            Ok(slot)
         }
 
         Expr::Access(_, _) => todo!(),
@@ -220,16 +249,35 @@ pub fn compile_stmt(state: &mut CompileState, stmt: &Stmt) -> Result<(), Compile
             let code_object = compile_fn(state, func_decl)?;
             let code_slot = state.add_const(Value::Callable(Callable::Func(Gc::new(code_object))));
 
-            // TODO: Use l-values
-            let slot = state.add_slot(Some(*ident));
-            state.add_instr(instr!(LoadConst, slot, code_slot));
+            if !state.at_global() {
+                // Normal context
+                let slot = state.add_slot(Some(*ident));
+                state.add_instr(instr!(LoadConst, slot, code_slot));
+            } else {
+                // If we are at global context, we use StoreGlobal
+
+                let slot = state.add_slot(None);
+                state.add_instr(instr!(LoadConst, slot, code_slot));
+
+                let global_slot = state.add_global(*ident);
+                state.add_instr(instr!(StoreGlobal, global_slot, slot));
+            }
         }
 
         Stmt::Let(ident, expr) => {
             let old_slot = compile_expr(state, expr)?;
-            let slot = state.add_slot(Some(*ident));
 
-            state.add_instr(instr!(Copy, slot, old_slot));
+            if !state.at_global() {
+                // Normal context
+                let slot = state.add_slot(Some(*ident));
+
+                state.add_instr(instr!(Copy, slot, old_slot));
+            } else {
+                // If we are at global context, we use StoreGlobal instead of Copy
+
+                let global_slot = state.add_global(*ident);
+                state.add_instr(instr!(StoreGlobal, global_slot, old_slot));
+            }
         }
 
         Stmt::If(if_chain, else_body) => {
@@ -305,6 +353,9 @@ pub fn compile_fn(state: &mut CompileState, decl: &FuncDecl) -> Result<CodeObjec
         stack_count: 0,
         arg_count: decl.parameters.len() as u16,
 
+        is_global: false,
+        context_count: 0,
+
         interner: state.interner,
     };
 
@@ -318,7 +369,7 @@ pub fn compile_fn(state: &mut CompileState, decl: &FuncDecl) -> Result<CodeObjec
         compile_stmt(&mut state, stmt)?;
     }
 
-    // TODO: Return null?
+    // Return null?
     let const_slot = state.add_const(Value::Null);
     let empty_slot = state.add_slot(None);
     state.add_instr(instr!(LoadConst, empty_slot, const_slot));
@@ -343,17 +394,25 @@ pub fn compile(
         stack_count: 0,
         arg_count: 0,
 
+        is_global: true,
+        context_count: 0,
+
         interner,
     };
 
+    // Add statements
     for stmt in stmts {
-        match stmt {
-            Stmt::Fn(_, decl) => {
-                return compile_fn(&mut state, decl);
-            }
-            _ => panic!(),
-        }
+        compile_stmt(&mut state, stmt)?;
     }
 
-    todo!()
+    // Return null?
+    let const_slot = state.add_const(Value::Null);
+    let empty_slot = state.add_slot(None);
+    state.add_instr(instr!(LoadConst, empty_slot, const_slot));
+    state.add_instr(instr!(Return, empty_slot));
+
+    // Get code object
+    let code_object = state.consume();
+
+    Ok(code_object)
 }

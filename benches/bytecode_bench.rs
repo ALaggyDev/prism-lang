@@ -7,8 +7,24 @@ use prism_lang::{
 };
 use std::hint::black_box;
 
-fn fib_recursive_normal() -> Gc<CodeObject> {
+fn main_wrapper(fib: Gc<CodeObject>, n: f64) -> Gc<CodeObject> {
     Gc::new(CodeObject {
+        code: Box::new([
+            instr!(LoadConst, 0, 0),
+            instr!(StoreGlobal, 0, 0),
+            instr!(LoadConst, 2, 1),
+            instr!(Call, 0, 1, 1),
+            instr!(Return, 1),
+        ]),
+        consts: Box::new([Value::Callable(Callable::Func(fib)), Value::Number(n)]),
+        global_names: Box::new(["fib".into()]),
+        stack_count: 3,
+        arg_count: 0,
+    })
+}
+
+fn fib_recursive_normal() -> Gc<CodeObject> {
+    let fib = Gc::new(CodeObject {
         code: Box::new([
             // load 1 & 2
             instr!(LoadConst, 1, 0),
@@ -33,11 +49,13 @@ fn fib_recursive_normal() -> Gc<CodeObject> {
         global_names: Box::new(["fib".into()]),
         stack_count: 8,
         arg_count: 1,
-    })
+    });
+
+    main_wrapper(fib, 25.0)
 }
 
 fn fib_iterative_normal() -> Gc<CodeObject> {
-    Gc::new(CodeObject {
+    let fib = Gc::new(CodeObject {
         code: Box::new([
             // 1: a, 2: b, 3: c, 4: i
             instr!(LoadConst, 1, 0),
@@ -62,7 +80,9 @@ fn fib_iterative_normal() -> Gc<CodeObject> {
         global_names: Box::new([]),
         stack_count: 7,
         arg_count: 1,
-    })
+    });
+
+    main_wrapper(fib, 100.0)
 }
 
 fn fib_recursive_compiled() -> Gc<CodeObject> {
@@ -74,6 +94,8 @@ fn fib_recursive_compiled() -> Gc<CodeObject> {
 
         return fib(n - 1) + fib(n - 2);
     }
+
+    fib(25);
     "#;
 
     let (tokens, interner) = stage_1(&content);
@@ -96,6 +118,8 @@ fn fib_iterative_compiled() -> Gc<CodeObject> {
         }
         return b;
     }
+
+    fib(100);
     "#;
 
     let (tokens, interner) = stage_1(&content);
@@ -104,11 +128,8 @@ fn fib_iterative_compiled() -> Gc<CodeObject> {
     Gc::new(compile(&program, &interner).unwrap())
 }
 
-fn run(code_object: Gc<CodeObject>, n: f64) {
-    let mut vm = Vm::new_from_code_object(Gc::clone(&code_object), &[Value::Number(n)], true);
-
-    vm.globals
-        .insert("fib".into(), Value::Callable(Callable::Func(code_object)));
+fn run(code_object: Gc<CodeObject>) {
+    let mut vm = Vm::new_from_code_object(Gc::clone(&code_object), &[], false);
 
     while vm.result.is_none() {
         vm.step();
@@ -124,16 +145,16 @@ fn fib_benchmark(c: &mut Criterion) {
     let fib_iter_compiled = fib_iterative_compiled();
 
     c.bench_function("fib recursive 25", |b| {
-        b.iter(|| run(Gc::clone(&fib_recu_normal), 25.0))
+        b.iter(|| run(Gc::clone(&fib_recu_normal)))
     });
     c.bench_function("fib iterative 100", |b| {
-        b.iter(|| run(Gc::clone(&fib_iter_normal), 100.0))
+        b.iter(|| run(Gc::clone(&fib_iter_normal)))
     });
     c.bench_function("fib recursive 25 compiled", |b| {
-        b.iter(|| run(Gc::clone(&fib_recu_compiled), 25.0))
+        b.iter(|| run(Gc::clone(&fib_recu_compiled)))
     });
     c.bench_function("fib iterative 100 compiled", |b| {
-        b.iter(|| run(Gc::clone(&fib_iter_compiled), 100.0))
+        b.iter(|| run(Gc::clone(&fib_iter_compiled)))
     });
 }
 
