@@ -1,23 +1,26 @@
+use gc::Gc;
 use string_interner::{DefaultBackend, StringInterner};
 
 use crate::{
     ast::{BinaryOp, Block, CompileError, Expr, FuncDecl, Stmt, UnaryOp},
-    bytecode::{CodeObject, Instr, Value},
+    bytecode::{Callable, CodeObject, Instr, Value},
     instr,
     token::{Ident, Literal},
 };
 
 #[derive(Clone, Debug)]
-pub struct CompileState {
+pub struct CompileState<'a> {
     code: Vec<Instr>,
     stack: Vec<Option<Ident>>,
-    consts: Vec<Literal>,
+    consts: Vec<Value>,
     global_names: Vec<Ident>,
     stack_count: u16,
     arg_count: u16,
+
+    interner: &'a StringInterner<DefaultBackend>,
 }
 
-impl CompileState {
+impl<'a> CompileState<'a> {
     pub fn add_instr(&mut self, instr: Instr) {
         self.code.push(instr);
     }
@@ -33,10 +36,10 @@ impl CompileState {
         slot
     }
 
-    pub fn add_const(&mut self, lit: &Literal) -> u16 {
-        // TODO: Cache literals
+    pub fn add_const(&mut self, value: Value) -> u16 {
+        // TODO: Cache values
         let slot = self.consts.len() as u16;
-        self.consts.push(lit.clone());
+        self.consts.push(value);
 
         slot
     }
@@ -69,18 +72,14 @@ impl CompileState {
         self.stack.truncate(context);
     }
 
-    pub fn consume(self, interner: &StringInterner<DefaultBackend>) -> CodeObject {
+    pub fn consume(self) -> CodeObject {
         CodeObject {
             code: self.code.into(),
-            consts: self
-                .consts
-                .iter()
-                .map(|lit| literal_to_value(lit))
-                .collect(),
+            consts: self.consts.into(),
             global_names: self
                 .global_names
                 .iter()
-                .map(|ident| interner.resolve(ident.0).unwrap().into())
+                .map(|ident| self.interner.resolve(ident.0).unwrap().into())
                 .collect(),
             stack_count: self.stack_count,
             arg_count: self.arg_count,
@@ -93,14 +92,14 @@ pub fn literal_to_value(lit: &Literal) -> Value {
         Literal::Null => Value::Null,
         Literal::Bool(val) => Value::Bool(*val),
         Literal::Number(val) => Value::Number(*val),
-        Literal::String(_) => todo!(),
+        Literal::String(val) => Value::String(Gc::new(val.clone())),
     }
 }
 
 pub fn compile_expr(state: &mut CompileState, expr: &Expr) -> Result<u16, CompileError> {
     match expr {
         Expr::Literal(lit) => {
-            let const_slot = state.add_const(lit);
+            let const_slot = state.add_const(literal_to_value(lit));
             let slot = state.add_slot(None);
 
             state.add_instr(instr!(LoadConst, slot, const_slot));
@@ -217,7 +216,14 @@ pub fn compile_stmt(state: &mut CompileState, stmt: &Stmt) -> Result<(), Compile
             compile_block(state, block)?;
         }
 
-        Stmt::Fn(_, _) => todo!(),
+        Stmt::Fn(ident, func_decl) => {
+            let code_object = compile_fn(state, func_decl)?;
+            let code_slot = state.add_const(Value::Callable(Callable::Func(Gc::new(code_object))));
+
+            // TODO: Use l-values
+            let slot = state.add_slot(Some(*ident));
+            state.add_instr(instr!(LoadConst, slot, code_slot));
+        }
 
         Stmt::Let(ident, expr) => {
             let old_slot = compile_expr(state, expr)?;
@@ -290,10 +296,7 @@ pub fn compile_stmt(state: &mut CompileState, stmt: &Stmt) -> Result<(), Compile
     Ok(())
 }
 
-pub fn compile_fn(
-    decl: &FuncDecl,
-    interner: &StringInterner<DefaultBackend>,
-) -> Result<CodeObject, CompileError> {
+pub fn compile_fn(state: &mut CompileState, decl: &FuncDecl) -> Result<CodeObject, CompileError> {
     let mut state = CompileState {
         code: vec![],
         stack: vec![],
@@ -301,6 +304,8 @@ pub fn compile_fn(
         global_names: vec![],
         stack_count: 0,
         arg_count: decl.parameters.len() as u16,
+
+        interner: state.interner,
     };
 
     // Add parameters
@@ -314,25 +319,37 @@ pub fn compile_fn(
     }
 
     // TODO: Return null?
-    let const_slot = state.add_const(&Literal::Null);
+    let const_slot = state.add_const(Value::Null);
     let empty_slot = state.add_slot(None);
     state.add_instr(instr!(LoadConst, empty_slot, const_slot));
     state.add_instr(instr!(Return, empty_slot));
 
     // Get code object
-    let code_object = state.consume(interner);
+    let code_object = state.consume();
 
     Ok(code_object)
 }
 
+/// Compile a program. The result is a code object representing the global context.
 pub fn compile(
     stmts: &[Stmt],
     interner: &StringInterner<DefaultBackend>,
 ) -> Result<CodeObject, CompileError> {
+    let mut state = CompileState {
+        code: vec![],
+        stack: vec![],
+        consts: vec![],
+        global_names: vec![],
+        stack_count: 0,
+        arg_count: 0,
+
+        interner,
+    };
+
     for stmt in stmts {
         match stmt {
             Stmt::Fn(_, decl) => {
-                return compile_fn(decl, interner);
+                return compile_fn(&mut state, decl);
             }
             _ => panic!(),
         }
