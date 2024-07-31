@@ -44,8 +44,6 @@ pub enum Token {
     Comma,
     #[token(";")]
     Semicolon,
-    #[token(".")]
-    Dot,
     #[token(":")]
     Colon,
 

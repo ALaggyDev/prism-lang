@@ -81,7 +81,9 @@ pub enum Expr {
     Grouped(Box<Expr>),
     Unary(UnaryOp, Box<Expr>),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
-    Access(Box<Expr>, Ident),
+    Tuple(Box<[Expr]>),
+    Array(Box<[Expr]>),
+    Index(Box<Expr>, Box<Expr>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -187,10 +189,37 @@ impl Expr {
 
         let mut lhs = match token {
             Token::Literal(literal) => Expr::Literal(literal),
+            // Can be grouped or tuple
             Token::OpenParen => {
                 let expr = Expr::parse(parser)?;
-                expect_token!(parser, Token::CloseParen, "Expected closing paraenesis.");
-                Expr::Grouped(expr.into())
+
+                match parser.read() {
+                    Token::CloseParen => Expr::Grouped(expr.into()),
+                    Token::Comma => {
+                        let mut exprs = vec![expr];
+
+                        loop {
+                            if let Token::CloseParen = parser.peek() {
+                                parser.advance();
+                                break;
+                            }
+
+                            exprs.push(Expr::parse(parser)?);
+
+                            if let Token::Comma = parser.peek() {
+                                parser.advance();
+                            }
+                        }
+
+                        Expr::Tuple(exprs.into())
+                    }
+                    _ => return Err(CompileError("Unexpected token.".into())),
+                }
+            }
+            Token::OpenBracket => {
+                let exprs = read_vec!(parser, Expr::parse, Token::Comma, Token::CloseBracket);
+
+                Expr::Array(exprs.into())
             }
             Token::Minus => Expr::Unary(UnaryOp::Negate, Box::new(Expr::parse_primary(parser)?)),
             Token::Not => Expr::Unary(UnaryOp::Not, Box::new(Expr::parse_primary(parser)?)),
@@ -209,12 +238,14 @@ impl Expr {
 
                     lhs = Expr::FunctionCall(lhs.into(), exprs.into());
                 }
-                Token::Dot => {
+                Token::OpenBracket => {
                     parser.advance();
 
-                    let ident = Ident::parse(parser)?;
+                    let expr = Expr::parse(parser)?;
 
-                    lhs = Expr::Access(lhs.into(), ident);
+                    expect_token!(parser, Token::CloseBracket, "Expected closing bracket.");
+
+                    lhs = Expr::Index(lhs.into(), expr.into());
                 }
                 _ => break,
             }

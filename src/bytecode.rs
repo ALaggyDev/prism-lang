@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt};
 
-use gc::{unsafe_empty_trace, Finalize, Gc, Trace};
+use gc::{unsafe_empty_trace, Finalize, Gc, GcCell, Trace};
 
 use crate::native_func::NATIVE_FUNCS;
 
@@ -12,6 +12,9 @@ pub enum InstrKind {
     LoadConst,
     LoadGlobal,
     StoreGlobal,
+
+    LoadIndex,
+    StoreIndex,
 
     OpAdd,
     OpMinus,
@@ -38,6 +41,9 @@ pub enum InstrKind {
     PackTuple,
     UnpackTuple,
 
+    PackArray,
+
+    // PackDict,
     Call,
     Return,
 }
@@ -112,6 +118,8 @@ pub enum Value {
     Number(f64),
     String(Gc<Box<str>>),
     Tuple(Gc<Box<[Value]>>),
+    Array(Gc<GcCell<Vec<Value>>>),
+    // Dict(Gc<GcCell<HashMap<Gc<Box<str>>, Value>>>),
     Callable(Callable),
 }
 
@@ -147,6 +155,14 @@ pub struct Vm {
     pub result: Option<Value>,
 }
 
+fn float_to_u64(val: f64) -> Option<u64> {
+    if val as u64 as f64 == val {
+        Some(val as u64)
+    } else {
+        None
+    }
+}
+
 impl Value {
     pub fn is_truthy(&self) -> bool {
         match self {
@@ -155,6 +171,8 @@ impl Value {
             Value::Number(val) => *val != 0.0 && !(*val).is_nan(),
             Value::String(val) => !val.is_empty(),
             Value::Tuple(_) => true,
+            Value::Array(arr) => !arr.borrow().is_empty(),
+            // Value::Dict(_) => true,
             Value::Callable(_) => true,
         }
     }
@@ -237,6 +255,9 @@ impl Value {
                 }
             }
 
+            (Value::Array(arr_1), Value::Array(arr_2)) => Gc::ptr_eq(arr_1, arr_2),
+
+            // (Value::Dict(dict_1), Value::Dict(dict_2)) => Gc::ptr_eq(dict_1, dict_2),
             (
                 Value::Callable(Callable::Native(func_1)),
                 Value::Callable(Callable::Native(func_2)),
@@ -278,6 +299,39 @@ impl Value {
     pub fn cmp_less_or_equal(&self, rhs: &Value) -> bool {
         match (self, rhs) {
             (Value::Number(op1), Value::Number(op2)) => op1 <= op2,
+            _ => panic!("Unsupported pair."),
+        }
+    }
+
+    pub fn load_index(&self, index: &Value) -> Value {
+        match (self, index) {
+            (Value::Tuple(tuple), Value::Number(index)) => {
+                let index = float_to_u64(*index).expect("Not integer!") as usize;
+
+                tuple[index].clone()
+            }
+            (Value::Array(array), Value::Number(index)) => {
+                let index = float_to_u64(*index).expect("Not integer!") as usize;
+
+                array.borrow()[index].clone()
+            }
+            // (Value::Dict(dict), Value::String(key)) => {
+            //     dict.borrow().get(key).expect("Value not found.").clone()
+            // }
+            _ => panic!("Unsupported pair."),
+        }
+    }
+
+    pub fn store_index(&self, index: &Value, rhs: &Value) {
+        match (self, index) {
+            (Value::Array(array), Value::Number(index)) => {
+                let index = float_to_u64(*index).expect("Not integer!") as usize;
+
+                array.borrow_mut()[index] = rhs.clone();
+            }
+            // (Value::Dict(dict), Value::String(key)) => {
+            //     dict.borrow().get(key).expect("Value not found.").clone()
+            // }
             _ => panic!("Unsupported pair."),
         }
     }
@@ -379,6 +433,18 @@ impl Vm {
 
                 self.globals
                     .insert(name.clone(), frame.get_slot(instr.a2()).clone());
+            }
+
+            InstrKind::LoadIndex => {
+                *frame.get_mut_slot(instr.a1()) = frame
+                    .get_slot(instr.a2())
+                    .load_index(frame.get_slot(instr.a3()));
+            }
+
+            InstrKind::StoreIndex => {
+                frame
+                    .get_slot(instr.a1())
+                    .store_index(frame.get_slot(instr.a2()), frame.get_slot(instr.a3()));
             }
 
             InstrKind::OpAdd => {
@@ -502,6 +568,36 @@ impl Vm {
                     .clone_from_slice(&tuple);
             }
 
+            InstrKind::PackArray => {
+                let slot = instr.a2();
+                let count = instr.a3();
+
+                let mut array = Vec::with_capacity(count as usize);
+
+                for i in 0..count {
+                    array.push(frame.get_slot(slot + i).clone());
+                }
+
+                *frame.get_mut_slot(instr.a1()) = Value::Array(Gc::new(GcCell::new(array)));
+            }
+
+            // InstrKind::PackDict => {
+            //     let slot = instr.a2();
+            //     let count = instr.a3();
+
+            //     let mut dict: HashMap<Gc<Box<str>>, Value> = HashMap::new();
+
+            //     for i in 0..count {
+            //         let Value::String(key) = frame.get_slot(slot + 2 * i) else {
+            //             panic!("Key must be string.");
+            //         };
+            //         let value = frame.get_slot(slot + 2 * i + 1).clone();
+
+            //         dict.insert(Gc::clone(key), value);
+            //     }
+
+            //     *frame.get_mut_slot(instr.a1()) = Value::Dict(Gc::new(GcCell::new(dict)));
+            // }
             InstrKind::Call => {
                 let Value::Callable(callable) = frame.get_slot(instr.a1()) else {
                     panic!("Trying to call non-callable.");

@@ -68,12 +68,12 @@ impl<'a> CompileState<'a> {
     }
 
     pub fn create_context(&mut self) -> usize {
-        self.context_count = self.context_count + 1;
+        self.context_count += 1;
         self.stack.len()
     }
 
     pub fn delete_context(&mut self, context: usize) {
-        self.context_count = self.context_count - 1;
+        self.context_count -= 1;
         self.stack.truncate(context);
     }
 
@@ -117,17 +117,23 @@ pub fn handle_lvalue(
             if let Some(slot) = state.find_ident_in_stack(ident) {
                 // Write to a local variable
                 state.add_instr(instr!(Copy, slot, r_expr));
-                Ok(slot)
             } else {
                 // Else, write to a global variable
                 let global_slot = state.add_global(*ident);
 
                 state.add_instr(instr!(StoreGlobal, global_slot, r_expr));
-                Ok(r_expr)
             }
         }
+        Expr::Index(expr, index) => {
+            let expr_slot = compile_expr(state, expr)?;
+            let index_slot = compile_expr(state, index)?;
+
+            state.add_instr(instr!(StoreIndex, expr_slot, index_slot, r_expr));
+        }
         _ => panic!("Not a l-value."),
-    }
+    };
+
+    Ok(r_expr)
 }
 
 pub fn compile_expr(state: &mut CompileState, expr: &Expr) -> Result<u16, CompileError> {
@@ -220,7 +226,66 @@ pub fn compile_expr(state: &mut CompileState, expr: &Expr) -> Result<u16, Compil
             Ok(slot)
         }
 
-        Expr::Access(_, _) => todo!(),
+        Expr::Tuple(exprs) => {
+            let old_expr_slots: Box<[_]> = exprs
+                .iter()
+                .map(|expr| compile_expr(state, expr))
+                .collect::<Result<_, CompileError>>()?;
+
+            let tuple_slot = state.add_slot(None);
+
+            // Copy the arguments into consecutive slots
+            for &old_expr_slot in old_expr_slots.iter() {
+                let new_expr_slot = state.add_slot(None);
+                state.add_instr(instr!(Copy, new_expr_slot, old_expr_slot));
+            }
+
+            // Pack tuple
+            state.add_instr(instr!(
+                PackTuple,
+                tuple_slot,
+                tuple_slot + 1,
+                exprs.len() as u16
+            ));
+
+            Ok(tuple_slot)
+        }
+
+        Expr::Array(exprs) => {
+            let old_expr_slots: Box<[_]> = exprs
+                .iter()
+                .map(|expr| compile_expr(state, expr))
+                .collect::<Result<_, CompileError>>()?;
+
+            let array_slot = state.add_slot(None);
+
+            // Copy the arguments into consecutive slots
+            for &old_expr_slot in old_expr_slots.iter() {
+                let new_expr_slot = state.add_slot(None);
+                state.add_instr(instr!(Copy, new_expr_slot, old_expr_slot));
+            }
+
+            // Pack array
+            state.add_instr(instr!(
+                PackArray,
+                array_slot,
+                array_slot + 1,
+                exprs.len() as u16
+            ));
+
+            Ok(array_slot)
+        }
+
+        Expr::Index(expr_1, expr_2) => {
+            let expr_1_slot = compile_expr(state, expr_1)?;
+            let expr_2_slot = compile_expr(state, expr_2)?;
+
+            let slot = state.add_slot(None);
+
+            state.add_instr(instr!(LoadIndex, slot, expr_1_slot, expr_2_slot));
+
+            Ok(slot)
+        }
     }
 }
 
