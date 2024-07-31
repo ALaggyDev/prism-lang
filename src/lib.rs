@@ -11,7 +11,7 @@ pub mod compiler;
 pub mod native_func;
 pub mod token;
 
-pub fn stage_1(program: &str) -> (Vec<Token>, StringInterner<DefaultBackend>) {
+pub fn lex(program: &str) -> (Vec<Token>, StringInterner<DefaultBackend>) {
     let mut lex = Token::lexer_with_extras(program, StringInterner::new());
 
     let mut tokens = Vec::new();
@@ -33,8 +33,8 @@ pub fn stage_1(program: &str) -> (Vec<Token>, StringInterner<DefaultBackend>) {
     (tokens, lex.extras)
 }
 
-pub fn stage_2(tokens: &[Token]) -> Result<Vec<Stmt>, CompileError> {
-    let mut parser = Parser::new(tokens);
+pub fn parse(tokens: &[Token], interactive: bool) -> Result<Vec<Stmt>, CompileError> {
+    let mut parser = Parser::new(tokens, interactive);
 
     let mut stmts = vec![];
 

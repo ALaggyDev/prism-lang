@@ -3,14 +3,18 @@ use crate::token::{Ident, Literal, Token};
 #[derive(Clone, Debug)]
 pub struct Parser<'a> {
     rem: &'a [Token],
+    interactive: bool,
 }
 
-#[derive(Clone, Debug)]
-pub struct CompileError(pub Box<str>);
+#[derive(Debug)]
+pub struct CompileError(pub Box<Token>);
 
 impl<'a> Parser<'a> {
-    pub fn new(tokens: &'a [Token]) -> Self {
-        Self { rem: tokens }
+    pub fn new(tokens: &'a [Token], interactive: bool) -> Self {
+        Self {
+            rem: tokens,
+            interactive,
+        }
     }
 
     pub fn advance(&mut self) {
@@ -38,10 +42,24 @@ impl<'a> Parser<'a> {
     }
 }
 
+macro_rules! compile_err {
+    ($token: expr) => {
+        return Err(CompileError(Box::new($token)))
+    };
+}
+
 macro_rules! expect_token {
-    ($parser: expr, $pat: pat, $msg: literal) => {
-        let $pat = $parser.read() else {
-            return Err(CompileError($msg.into()));
+    // Stupid hack to make interactive shell more usable
+    ($parser: expr, Token::Semicolon) => {
+        let token = $parser.read();
+        if token != Token::Semicolon && !($parser.interactive && token == Token::Eof) {
+            compile_err!(token);
+        }
+    };
+    ($parser: expr, $pat: pat) => {
+        let token = $parser.read();
+        let $pat = token else {
+            compile_err!(token);
         };
     };
 }
@@ -60,7 +78,7 @@ macro_rules! read_vec {
                 match $parser.read() {
                     $is_sep => {}
                     $is_delim => break,
-                    _ => return Err(CompileError("Unexpected token.".into())),
+                    other => compile_err!(other),
                 }
             }
         }
@@ -121,10 +139,9 @@ pub enum Fixity {
 
 impl Parse for Ident {
     fn parse(parser: &mut Parser) -> Result<Self, CompileError> {
-        match parser.read() {
-            Token::Ident(ident) => Ok(ident),
-            _ => Err(CompileError("Expected ident.".into())),
-        }
+        expect_token!(parser, Token::Ident(ident));
+
+        Ok(ident)
     }
 }
 
@@ -213,7 +230,7 @@ impl Expr {
 
                         Expr::Tuple(exprs.into())
                     }
-                    _ => return Err(CompileError("Unexpected token.".into())),
+                    other => compile_err!(other),
                 }
             }
             Token::OpenBracket => {
@@ -224,7 +241,7 @@ impl Expr {
             Token::Minus => Expr::Unary(UnaryOp::Negate, Box::new(Expr::parse_primary(parser)?)),
             Token::Not => Expr::Unary(UnaryOp::Not, Box::new(Expr::parse_primary(parser)?)),
             Token::Ident(ident) => Expr::Variable(ident),
-            _ => return Err(CompileError("Unexpected token.".into())),
+            other => compile_err!(other),
         };
 
         // Right operators
@@ -243,7 +260,7 @@ impl Expr {
 
                     let expr = Expr::parse(parser)?;
 
-                    expect_token!(parser, Token::CloseBracket, "Expected closing bracket.");
+                    expect_token!(parser, Token::CloseBracket);
 
                     lhs = Expr::Index(lhs.into(), expr.into());
                 }
@@ -323,6 +340,7 @@ impl Parse for Expr {
 
 #[derive(Clone, Debug)]
 pub enum Stmt {
+    Empty,
     Expr(Expr),
     Block(Block),
     Fn(Ident, FuncDecl),
@@ -349,11 +367,11 @@ pub struct ClassDecl {
 
 impl Stmt {
     fn parse_fn(parser: &mut Parser) -> Result<(Ident, FuncDecl), CompileError> {
-        expect_token!(parser, Token::Fn, "Expected fn.");
+        expect_token!(parser, Token::Fn);
 
         let ident = Ident::parse(parser)?;
 
-        expect_token!(parser, Token::OpenParen, "Expected opening paraenesis.");
+        expect_token!(parser, Token::OpenParen);
 
         let parameters = read_vec!(parser, Ident::parse, Token::Comma, Token::CloseParen);
 
@@ -372,6 +390,10 @@ impl Stmt {
 impl Parse for Stmt {
     fn parse(parser: &mut Parser) -> Result<Self, CompileError> {
         match parser.peek() {
+            Token::Semicolon => {
+                parser.advance();
+                Ok(Self::Empty)
+            }
             Token::OpenBrace => Ok(Self::Block(Block::parse(parser)?)),
             Token::Fn => {
                 let decl = Stmt::parse_fn(parser)?;
@@ -381,11 +403,11 @@ impl Parse for Stmt {
                 parser.advance();
 
                 let ident = Ident::parse(parser)?;
-                expect_token!(parser, Token::Assign, "Expected assignment.");
+                expect_token!(parser, Token::Assign);
 
                 let expr = Expr::parse(parser)?;
 
-                expect_token!(parser, Token::Semicolon, "Expected semicolon.");
+                expect_token!(parser, Token::Semicolon);
 
                 Ok(Self::Let(ident, expr))
             }
@@ -396,11 +418,11 @@ impl Parse for Stmt {
                 let mut else_branch = None;
 
                 loop {
-                    expect_token!(parser, Token::OpenParen, "Expected opening paraenesis.");
+                    expect_token!(parser, Token::OpenParen);
 
                     let expr = Expr::parse(parser)?;
 
-                    expect_token!(parser, Token::CloseParen, "Expected closing paraenesis.");
+                    expect_token!(parser, Token::CloseParen);
 
                     let block = Block::parse(parser)?;
 
@@ -417,7 +439,7 @@ impl Parse for Stmt {
                                 else_branch = Some(Block::parse(parser)?);
                                 break;
                             }
-                            _ => return Err(CompileError("Expected if or opening brace.".into())),
+                            _ => compile_err!(parser.read()),
                         }
                     } else {
                         break;
@@ -429,11 +451,11 @@ impl Parse for Stmt {
             Token::While => {
                 parser.advance();
 
-                expect_token!(parser, Token::OpenParen, "Expected opening paraenesis.");
+                expect_token!(parser, Token::OpenParen);
 
                 let expr = Expr::parse(parser)?;
 
-                expect_token!(parser, Token::CloseParen, "Expected closing paraenesis.");
+                expect_token!(parser, Token::CloseParen);
 
                 let block = Block::parse(parser)?;
 
@@ -442,14 +464,14 @@ impl Parse for Stmt {
             Token::Break => {
                 parser.advance();
 
-                expect_token!(parser, Token::Semicolon, "Expected semicolon.");
+                expect_token!(parser, Token::Semicolon);
 
                 Ok(Self::Break)
             }
             Token::Continue => {
                 parser.advance();
 
-                expect_token!(parser, Token::Semicolon, "Expected semicolon.");
+                expect_token!(parser, Token::Semicolon);
 
                 Ok(Self::Continue)
             }
@@ -458,7 +480,7 @@ impl Parse for Stmt {
 
                 let expr = Expr::parse(parser)?;
 
-                expect_token!(parser, Token::Semicolon, "Expected semicolon.");
+                expect_token!(parser, Token::Semicolon);
 
                 Ok(Self::Return(expr))
             }
@@ -467,7 +489,7 @@ impl Parse for Stmt {
 
                 let ident = Ident::parse(parser)?;
 
-                expect_token!(parser, Token::OpenBrace, "Expected opening brace.");
+                expect_token!(parser, Token::OpenBrace);
 
                 let mut methods = Vec::new();
 
@@ -489,7 +511,7 @@ impl Parse for Stmt {
             _ => {
                 let expr = Expr::parse(parser)?;
 
-                expect_token!(parser, Token::Semicolon, "Expected semicolon.");
+                expect_token!(parser, Token::Semicolon);
 
                 Ok(Self::Expr(expr))
             }
@@ -502,7 +524,7 @@ pub struct Block(pub Box<[Stmt]>);
 
 impl Parse for Block {
     fn parse(parser: &mut Parser) -> Result<Self, CompileError> {
-        expect_token!(parser, Token::OpenBrace, "Expected opening brace.");
+        expect_token!(parser, Token::OpenBrace);
 
         let mut stmts = vec![];
 

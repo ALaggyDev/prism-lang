@@ -3,9 +3,8 @@ use gc::Gc;
 use prism_lang::{
     bytecode::{Callable, CodeObject, Value, Vm},
     compiler::compile,
-    instr, stage_1, stage_2,
+    instr, lex, parse,
 };
-use std::hint::black_box;
 
 fn main_wrapper(fib: Gc<CodeObject>, n: f64) -> Gc<CodeObject> {
     Gc::new(CodeObject {
@@ -14,7 +13,6 @@ fn main_wrapper(fib: Gc<CodeObject>, n: f64) -> Gc<CodeObject> {
             instr!(StoreGlobal, 0, 0),
             instr!(LoadConst, 2, 1),
             instr!(Call, 0, 1, 1),
-            instr!(Return, 1),
         ]),
         consts: Box::new([Value::Callable(Callable::Func(fib)), Value::Number(n)]),
         global_names: Box::new(["fib".into()]),
@@ -98,8 +96,8 @@ fn fib_recursive_compiled() -> Gc<CodeObject> {
     fib(25);
     "#;
 
-    let (tokens, interner) = stage_1(&content);
-    let program = stage_2(&tokens).unwrap();
+    let (tokens, interner) = lex(&content);
+    let program = parse(&tokens, false).unwrap();
 
     Gc::new(compile(&program, &interner).unwrap())
 }
@@ -122,20 +120,20 @@ fn fib_iterative_compiled() -> Gc<CodeObject> {
     fib(100);
     "#;
 
-    let (tokens, interner) = stage_1(&content);
-    let program = stage_2(&tokens).unwrap();
+    let (tokens, interner) = lex(&content);
+    let program = parse(&tokens, false).unwrap();
 
     Gc::new(compile(&program, &interner).unwrap())
 }
 
 fn run(code_object: Gc<CodeObject>) {
-    let mut vm = Vm::new_from_code_object(Gc::clone(&code_object), &[], false);
+    let mut vm = Vm::new(false);
 
-    while vm.result.is_none() {
+    vm.push_frame(code_object, &[]);
+
+    while !vm.finished {
         vm.step();
     }
-
-    black_box(vm.result);
 }
 
 fn fib_benchmark(c: &mut Criterion) {

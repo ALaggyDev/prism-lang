@@ -152,7 +152,7 @@ pub enum Callable {
 pub struct Vm {
     pub frames: Vec<CallFrame>,
     pub globals: HashMap<Box<str>, Value>,
-    pub result: Option<Value>,
+    pub finished: bool,
 }
 
 fn float_to_u64(val: f64) -> Option<u64> {
@@ -354,8 +354,8 @@ impl CallFrame {
         }
     }
 
-    pub fn fetch_instr(&self) -> Instr {
-        self.code_obj.code[self.ip as usize]
+    pub fn fetch_instr(&self) -> Option<Instr> {
+        self.code_obj.code.get(self.ip as usize).copied()
     }
 
     pub fn get_slot(&self, index: u16) -> &Value {
@@ -368,29 +368,31 @@ impl CallFrame {
 }
 
 impl Vm {
-    pub fn new_from_code_object(
-        code_object: Gc<CodeObject>,
-        args: &[Value],
-        use_builtin: bool,
-    ) -> Self {
-        let call_frame = CallFrame::new(code_object, args);
-
+    pub fn new(use_builtin: bool) -> Self {
         let mut vm = Vm {
-            frames: vec![call_frame],
+            frames: vec![],
             globals: HashMap::new(),
-            result: None,
+            finished: false,
         };
 
         if use_builtin {
-            for (name, native_func) in NATIVE_FUNCS {
-                vm.globals.insert(
-                    (*name).into(),
-                    Value::Callable(Callable::Native(*native_func)),
-                );
-            }
+            vm.add_builtins();
         }
 
         vm
+    }
+
+    pub fn push_frame(&mut self, code_object: Gc<CodeObject>, args: &[Value]) {
+        self.frames.push(CallFrame::new(code_object, args));
+    }
+
+    fn add_builtins(&mut self) {
+        for (name, native_func) in NATIVE_FUNCS {
+            self.globals.insert(
+                (*name).into(),
+                Value::Callable(Callable::Native(*native_func)),
+            );
+        }
     }
 
     pub fn get_cur_frame(&self) -> &CallFrame {
@@ -402,13 +404,22 @@ impl Vm {
     }
 
     pub fn step(&mut self) {
-        if self.result.is_some() {
+        if self.finished {
             return;
         }
 
         let frame = self.frames.last_mut().unwrap();
 
-        let instr = frame.fetch_instr();
+        let Some(instr) = frame.fetch_instr() else {
+            if self.frames.len() == 1 {
+                self.frames.clear();
+                self.finished = true;
+                return;
+            } else {
+                panic!("Instruction pointer out of bound.");
+            }
+        };
+
         frame.ip += 1;
 
         match instr.kind() {
@@ -627,23 +638,9 @@ impl Vm {
 
                 self.frames.pop();
 
-                if let Some(old_frame) = self.frames.last_mut() {
-                    *old_frame.get_mut_slot(old_frame.ret_slot) = ret_val;
-                } else {
-                    self.result = Some(ret_val);
-                    // return;
-                }
+                let old_frame = self.get_mut_cur_frame();
+                *old_frame.get_mut_slot(old_frame.ret_slot) = ret_val;
             }
         }
-
-        // // DEBUG ONLY
-        // let frame = self.get_cur_frame();
-
-        // println!(
-        //     "{} {:?} {:?}",
-        //     self.frames.len(),
-        //     instr,
-        //     frame.stack
-        // );
     }
 }

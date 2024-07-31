@@ -127,11 +127,13 @@ pub fn handle_lvalue(
             if let Some(slot) = state.find_ident_in_stack(ident) {
                 // Write to a local variable
                 state.add_instr(instr!(Copy, slot, r_expr));
-            } else {
-                // Else, write to a global variable
+            } else if state.at_global() {
+                // Else, if we can write into global, write into global
                 let global_slot = state.add_global(*ident);
 
                 state.add_instr(instr!(StoreGlobal, global_slot, r_expr));
+            } else {
+                panic!("Variable not found.")
             }
         }
         Expr::Index(expr, index) => {
@@ -312,6 +314,8 @@ pub fn compile_block(state: &mut CompileState, block: &Block) -> Result<(), Comp
 
 pub fn compile_stmt(state: &mut CompileState, stmt: &Stmt) -> Result<(), CompileError> {
     match stmt {
+        Stmt::Empty => {}
+
         Stmt::Expr(expr) => {
             compile_expr(state, expr)?;
         }
@@ -448,7 +452,7 @@ pub fn compile_fn(state: &mut CompileState, decl: &FuncDecl) -> Result<CodeObjec
         compile_stmt(&mut state, stmt)?;
     }
 
-    // Return null?
+    // Return null
     let const_slot = state.add_const(Value::Null);
     let empty_slot = state.add_slot(None);
     state.add_instr(instr!(LoadConst, empty_slot, const_slot));
@@ -483,12 +487,6 @@ pub fn compile(
     for stmt in stmts {
         compile_stmt(&mut state, stmt)?;
     }
-
-    // Return null?
-    let const_slot = state.add_const(Value::Null);
-    let empty_slot = state.add_slot(None);
-    state.add_instr(instr!(LoadConst, empty_slot, const_slot));
-    state.add_instr(instr!(Return, empty_slot));
 
     // Get code object
     let code_object = state.consume();
