@@ -40,19 +40,29 @@ impl<'a> CompileState<'a> {
     }
 
     pub fn add_const(&mut self, value: Value) -> u16 {
-        // TODO: Cache values
-        let slot = self.consts.len() as u16;
-        self.consts.push(value);
+        // Find if we have already added the value (NOTE: Should Value::cmp_equal be used?)
+        if let Some(slot) = self.consts.iter().position(|val| val.cmp_equal(&value)) {
+            slot as u16
+        } else {
+            // Else, add the value
+            let slot = self.consts.len() as u16;
+            self.consts.push(value);
 
-        slot
+            slot
+        }
     }
 
     pub fn add_global(&mut self, ident: Ident) -> u16 {
-        // TODO: Cache global
-        let slot = self.global_names.len() as u16;
-        self.global_names.push(ident);
+        // Find if we have already added the value
+        if let Some(slot) = self.global_names.iter().position(|val| *val == ident) {
+            slot as u16
+        } else {
+            // Else, add the value
+            let slot = self.global_names.len() as u16;
+            self.global_names.push(ident);
 
-        slot
+            slot
+        }
     }
 
     pub fn find_ident_in_stack(&self, ident: &Ident) -> Option<u16> {
@@ -347,9 +357,10 @@ pub fn compile_stmt(state: &mut CompileState, stmt: &Stmt) -> Result<(), Compile
 
         Stmt::If(if_chain, else_body) => {
             // TODO: Use labels!!!
+            // Apparently, this dumb way of emitting jump instruction is called `backpatching`, anyway IMPLEMENT LABELS!!!
             let mut jmp_instrs_at = vec![];
 
-            for (cond, body) in if_chain.iter() {
+            for (i, (cond, body)) in if_chain.iter().enumerate() {
                 let cond_slot = compile_expr(state, cond)?;
 
                 // Jump to the next branch
@@ -360,8 +371,11 @@ pub fn compile_stmt(state: &mut CompileState, stmt: &Stmt) -> Result<(), Compile
                 compile_block(state, body)?;
 
                 // Jump to the end
-                jmp_instrs_at.push(state.code.len());
-                state.add_instr(instr!(Copy, 0));
+                // If we are at the last if chain and there's no else body, we skip emitting jump instruction
+                if !(i + 1 == if_chain.len() && else_body.is_none()) {
+                    jmp_instrs_at.push(state.code.len());
+                    state.add_instr(instr!(Copy, 0));
+                }
 
                 state.code[at] = instr!(JumpNotIf, state.code.len() as u16, cond_slot);
             }
