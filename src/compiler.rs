@@ -127,13 +127,11 @@ pub fn handle_lvalue(
             if let Some(slot) = state.find_ident_in_stack(ident) {
                 // Write to a local variable
                 state.add_instr(instr!(Copy, slot, r_expr));
-            } else if state.at_global() {
+            } else {
                 // Else, if we can write into global, write into global
                 let global_slot = state.add_global(*ident);
 
                 state.add_instr(instr!(StoreGlobal, global_slot, r_expr));
-            } else {
-                panic!("Variable not found.")
             }
         }
         Expr::Index(expr, index) => {
