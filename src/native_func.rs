@@ -1,10 +1,14 @@
+use std::io::{self, Write};
+
+use gc::Gc;
 use itertools::Itertools;
 
 use crate::bytecode::{Callable, NativeFunc, Value};
 
-// If objects have circular references, a naive print approach will crash the program.
-// Therefore we need to store the objects we have visited.
 pub fn print(args: &[Value]) -> Value {
+    // If objects have circular references, a naive print approach will crash the program.
+    // Therefore we need to store the objects we have visited.
+
     // Using *const () is pretty cursed, but we have no better way since the type of the gc-managed object is unknown.
     let mut visited: Vec<*const ()> = vec![];
 
@@ -62,4 +66,27 @@ fn print_inner(visited: &mut Vec<*const ()>, value: &Value) -> String {
     }
 }
 
-pub static NATIVE_FUNCS: &[(&str, NativeFunc)] = &[("print", print)];
+pub fn input(args: &[Value]) -> Value {
+    if !args.is_empty() {
+        let mut visited: Vec<*const ()> = vec![];
+        print!("{}", print_inner(&mut visited, &args[0]));
+        io::stdout().flush().unwrap();
+    }
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+    trim_newline(&mut input);
+
+    Value::String(Gc::new(input.into()))
+}
+
+fn trim_newline(s: &mut String) {
+    if s.ends_with('\n') {
+        s.pop();
+        if s.ends_with('\r') {
+            s.pop();
+        }
+    }
+}
+
+pub static NATIVE_FUNCS: &[(&str, NativeFunc)] = &[("print", print), ("input", input)];

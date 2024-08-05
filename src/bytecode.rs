@@ -305,6 +305,16 @@ impl Value {
 
     pub fn load_index(&self, index: &Value) -> Value {
         match (self, index) {
+            (Value::String(string), Value::Number(index)) => {
+                let index = float_to_u64(*index).expect("Not integer!") as usize;
+
+                if let Some(chr) = string.chars().nth(index) {
+                    let temp: String = chr.into();
+                    Value::String(Gc::new(temp.into()))
+                } else {
+                    panic!("Index out of range.");
+                }
+            }
             (Value::Tuple(tuple), Value::Number(index)) => {
                 let index = float_to_u64(*index).expect("Not integer!") as usize;
 
