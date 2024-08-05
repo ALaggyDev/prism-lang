@@ -2,7 +2,7 @@ use logos::Logos;
 use string_interner::{DefaultBackend, DefaultSymbol, StringInterner};
 
 #[derive(Logos, Clone, Debug, PartialEq)]
-#[logos(extras = StringInterner<DefaultBackend>)]
+#[logos(extras = &'s mut StringInterner<DefaultBackend>)]
 #[logos(skip r"[ \t\r\n]+")]
 #[logos(skip r"\/\/[^\r\n]*")] // Line comment
 #[logos(skip r"\/\*([^*]|\*[^/])*\*\/")] // Block comment (unnested)

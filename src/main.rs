@@ -6,41 +6,44 @@ use prism_lang::token::{Ident, Token};
 use prism_lang::{lex, parse};
 use std::io::Write;
 use std::{env, fs, io};
+use string_interner::StringInterner;
 
 fn interactive_mode() -> io::Result<()> {
     println!("Prism language 1.0.0. Interactive shell.\nType \".help\" for more information.");
 
-    let mut input = String::new();
-    let mut more_input = false;
+    let mut interner = StringInterner::new();
+    let mut tokens: Vec<Token> = vec![];
+
+    let mut more_tokens = false;
 
     let mut vm = Vm::new(true);
 
     loop {
-        if more_input {
+        // Print ... or >>>
+        if more_tokens {
             print!("... ");
         } else {
             print!(">>> ");
         }
         io::stdout().flush()?;
 
-        let mut temp = String::new();
-        io::stdin().read_line(&mut temp)?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
 
         // Print help message
-        if temp.starts_with(".help") {
+        if input.starts_with(".help") {
             println!("There is no help message. Go figure out the solution yourself.");
 
             continue;
         }
 
-        input += &temp;
-
-        let (tokens, mut interner) = lex(&input);
+        tokens.append(&mut lex(&input, &mut interner));
 
         match parse(&tokens, true) {
             Ok(mut program) => {
-                input.clear();
-                more_input = false;
+                tokens.clear();
+
+                more_tokens = false;
 
                 // Print the result if only one expression exists
                 // Another stupid hack to make this work
@@ -67,12 +70,12 @@ fn interactive_mode() -> io::Result<()> {
 
             // the input simply is not finished, we keep waiting for more input
             Err(err) if *err.0 == Token::Eof => {
-                more_input = true;
+                more_tokens = true;
             }
 
             Err(err) => {
-                input.clear();
-                more_input = false;
+                tokens.clear();
+                more_tokens = false;
 
                 println!("Unexpected token: {:?}", err.0);
             }
@@ -91,7 +94,8 @@ fn main() -> Result<(), io::Error> {
 
     let content = fs::read_to_string(pathname)?;
 
-    let (tokens, interner) = lex(&content);
+    let mut interner = StringInterner::new();
+    let tokens = lex(&content, &mut interner);
     let program = parse(&tokens, false).unwrap();
 
     let code_object = Gc::new(compile(&program, &interner).unwrap());

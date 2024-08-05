@@ -5,6 +5,7 @@ use prism_lang::{
     compiler::compile,
     instr, lex, parse,
 };
+use string_interner::StringInterner;
 
 fn main_wrapper(fib: Gc<CodeObject>, n: f64) -> Gc<CodeObject> {
     Gc::new(CodeObject {
@@ -96,7 +97,8 @@ fn fib_recursive_compiled() -> Gc<CodeObject> {
     fib(25);
     "#;
 
-    let (tokens, interner) = lex(&content);
+    let mut interner = StringInterner::new();
+    let tokens = lex(&content, &mut interner);
     let program = parse(&tokens, false).unwrap();
 
     Gc::new(compile(&program, &interner).unwrap())
@@ -120,7 +122,8 @@ fn fib_iterative_compiled() -> Gc<CodeObject> {
     fib(100);
     "#;
 
-    let (tokens, interner) = lex(&content);
+    let mut interner = StringInterner::new();
+    let tokens = lex(&content, &mut interner);
     let program = parse(&tokens, false).unwrap();
 
     Gc::new(compile(&program, &interner).unwrap())

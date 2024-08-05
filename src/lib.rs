@@ -11,8 +11,8 @@ pub mod compiler;
 pub mod native_func;
 pub mod token;
 
-pub fn lex(program: &str) -> (Vec<Token>, StringInterner<DefaultBackend>) {
-    let mut lex = Token::lexer_with_extras(program, StringInterner::new());
+pub fn lex(program: &str, interner: &mut StringInterner<DefaultBackend>) -> Vec<Token> {
+    let mut lex = Token::lexer_with_extras(program, interner);
 
     let mut tokens = Vec::new();
     let mut errored = false;
@@ -30,7 +30,7 @@ pub fn lex(program: &str) -> (Vec<Token>, StringInterner<DefaultBackend>) {
         panic!("Exit");
     }
 
-    (tokens, lex.extras)
+    tokens
 }
 
 pub fn parse(tokens: &[Token], interactive: bool) -> Result<Vec<Stmt>, CompileError> {
