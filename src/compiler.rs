@@ -300,13 +300,10 @@ pub fn compile_expr(state: &mut CompileState, expr: &Expr) -> Result<u16, Compil
 }
 
 pub fn compile_block(state: &mut CompileState, block: &Block) -> Result<(), CompileError> {
-    let context = state.create_context();
-
     for g_stmt in block.0.iter() {
         compile_stmt(state, g_stmt)?;
     }
 
-    state.delete_context(context);
     Ok(())
 }
 
@@ -319,7 +316,9 @@ pub fn compile_stmt(state: &mut CompileState, stmt: &Stmt) -> Result<(), Compile
         }
 
         Stmt::Block(block) => {
+            let context = state.create_context();
             compile_block(state, block)?;
+            state.delete_context(context);
         }
 
         Stmt::Fn(ident, func_decl) => {
@@ -360,54 +359,99 @@ pub fn compile_stmt(state: &mut CompileState, stmt: &Stmt) -> Result<(), Compile
         Stmt::If(if_chain, else_body) => {
             // TODO: Use labels!!!
             // Apparently, this dumb way of emitting jump instruction is called `backpatching`, anyway IMPLEMENT LABELS!!!
-            let mut jmp_instrs_at = vec![];
+            let mut exit_labels = vec![];
 
             for (i, (cond, body)) in if_chain.iter().enumerate() {
                 let cond_slot = compile_expr(state, cond)?;
 
                 // Jump to the next branch
-                let at = state.code.len();
+                let cont_label = state.code.len();
                 state.add_instr(instr!(Copy, 0));
 
                 // Block
+                let context = state.create_context();
                 compile_block(state, body)?;
+                state.delete_context(context);
 
                 // Jump to the end
                 // If we are at the last if chain and there's no else body, we skip emitting jump instruction
                 if !(i + 1 == if_chain.len() && else_body.is_none()) {
-                    jmp_instrs_at.push(state.code.len());
+                    exit_labels.push(state.code.len());
                     state.add_instr(instr!(Copy, 0));
                 }
 
-                state.code[at] = instr!(JumpNotIf, state.code.len() as u16, cond_slot);
+                state.code[cont_label] = instr!(JumpNotIf, state.code.len() as u16, cond_slot);
             }
 
             if let Some(else_body) = else_body {
+                let context = state.create_context();
                 compile_block(state, else_body)?;
+                state.delete_context(context);
             }
 
             let end_at = state.code.len();
-            for instr_at in jmp_instrs_at {
+            for instr_at in exit_labels {
                 state.code[instr_at] = instr!(Jump, end_at as u16);
             }
         }
 
         Stmt::While(cond, block) => {
-            let at = state.code.len();
+            let label_1 = state.code.len();
 
             // Jump out if false
             let cond_slot = compile_expr(state, cond)?;
-            let temp_at = state.code.len();
+            let label_2 = state.code.len();
             state.add_instr(instr!(Copy, 0));
+
+            // Block
+            let context = state.create_context();
+            compile_block(state, block)?;
+            state.delete_context(context);
+
+            // Jump back
+            state.add_instr(instr!(Jump, label_1 as u16));
+
+            // Backpatch
+            state.code[label_2] = instr!(JumpNotIf, state.code.len() as u16, cond_slot);
+        }
+
+        Stmt::For(ident, (l_expr, r_expr), block) => {
+            let (l_slot, r_slot) = (compile_expr(state, l_expr)?, compile_expr(state, r_expr)?);
+
+            // Push one onto the stack
+            let one_const_slot = state.add_const(Value::Number(1.0));
+            let one_slot = state.add_slot(None);
+            state.add_instr(instr!(LoadConst, one_slot, one_const_slot));
+
+            // Creat ident slot
+
+            let context = state.create_context();
+
+            let ident_slot = state.add_slot(Some(*ident));
+
+            state.add_instr(instr!(Copy, ident_slot, l_slot));
+
+            // Compare if jump
+
+            let label_1 = state.code.len();
+
+            let cond_slot = state.add_slot(None);
+            state.add_instr(instr!(CmpGreaterOrEqual, cond_slot, ident_slot, r_slot));
+            state.add_instr(instr!(Copy, 0)); // backpatch spot
 
             // Block
             compile_block(state, block)?;
 
-            // Jump back
-            state.add_instr(instr!(Jump, at as u16));
+            // Increment
+            state.add_instr(instr!(OpAdd, ident_slot, ident_slot, one_slot));
 
-            let end_at = state.code.len();
-            state.code[temp_at] = instr!(JumpNotIf, end_at as u16, cond_slot);
+            // Jump back
+            state.add_instr(instr!(Jump, label_1 as u16));
+
+            // Backpatch
+            state.code[label_1 + 1] = instr!(JumpIf, state.code.len() as u16, cond_slot);
+
+            state.delete_context(context);
         }
 
         Stmt::Break => todo!(),

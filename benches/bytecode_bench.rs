@@ -109,13 +109,11 @@ fn fib_iterative_compiled() -> Gc<CodeObject> {
     fn fib(n) {
         let a = 0;
         let b = 1;
-        let i = 2;
-        while (i <= n) {
-            let c = a + b;
-            a = b;
-            b = c;
-            i = i + 1;
-        }
+        for i in 1..n {
+		    let c = a + b;
+		    a = b;
+		    b = c;
+	    }
         return b;
     }
 

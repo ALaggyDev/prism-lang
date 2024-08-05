@@ -38,6 +38,13 @@ pub enum Token {
     #[token("class")]
     Class,
 
+    #[token("for")]
+    For,
+    #[token("in")]
+    In,
+    #[token("..")]
+    Range,
+
     #[token("=")]
     Assign,
     #[token(",")]

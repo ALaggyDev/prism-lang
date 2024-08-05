@@ -347,6 +347,7 @@ pub enum Stmt {
     Let(Ident, Expr),
     If(Box<[(Expr, Block)]>, Option<Block>),
     While(Expr, Block),
+    For(Ident, (Expr, Expr), Block),
     Break,
     Continue,
     Return(Expr),
@@ -460,6 +461,21 @@ impl Parse for Stmt {
                 let block = Block::parse(parser)?;
 
                 Ok(Self::While(expr, block))
+            }
+            Token::For => {
+                parser.advance();
+
+                let ident = Ident::parse(parser)?;
+
+                expect_token!(parser, Token::In);
+
+                let l_expr = Expr::parse(parser)?;
+                expect_token!(parser, Token::Range);
+                let r_expr = Expr::parse(parser)?;
+
+                let block = Block::parse(parser)?;
+
+                Ok(Self::For(ident, (l_expr, r_expr), block))
             }
             Token::Break => {
                 parser.advance();
