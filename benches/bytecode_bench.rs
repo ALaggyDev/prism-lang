@@ -98,7 +98,7 @@ fn fib_recursive_compiled() -> Gc<CodeObject> {
     "#;
 
     let mut interner = StringInterner::new();
-    let tokens = lex(&content, &mut interner);
+    let tokens = lex(&content, &mut interner).unwrap();
     let program = parse(&tokens, false).unwrap();
 
     Gc::new(compile(&program, &interner).unwrap())
@@ -123,7 +123,7 @@ fn fib_iterative_compiled() -> Gc<CodeObject> {
     "#;
 
     let mut interner = StringInterner::new();
-    let tokens = lex(&content, &mut interner);
+    let tokens = lex(&content, &mut interner).unwrap();
     let program = parse(&tokens, false).unwrap();
 
     Gc::new(compile(&program, &interner).unwrap())

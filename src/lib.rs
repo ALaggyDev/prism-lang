@@ -11,26 +11,23 @@ pub mod compiler;
 pub mod native_func;
 pub mod token;
 
-pub fn lex(program: &str, interner: &mut StringInterner<DefaultBackend>) -> Vec<Token> {
+pub fn lex<'a>(
+    program: &'a str,
+    interner: &'a mut StringInterner<DefaultBackend>,
+) -> Result<Vec<Token>, &'a str> {
     let mut lex = Token::lexer_with_extras(program, interner);
 
     let mut tokens = Vec::new();
-    let mut errored = false;
 
     while let Some(token) = lex.next() {
         if let Ok(token) = token {
             tokens.push(token);
         } else {
-            errored = true;
-            println!("Unknown token at {}..{}.", lex.span().start, lex.span().end);
+            return Err(lex.slice());
         }
     }
 
-    if errored {
-        panic!("Exit");
-    }
-
-    tokens
+    Ok(tokens)
 }
 
 pub fn parse(tokens: &[Token], interactive: bool) -> Result<Vec<Stmt>, CompileError> {

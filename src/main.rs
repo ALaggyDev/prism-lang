@@ -37,7 +37,16 @@ fn interactive_mode() -> io::Result<()> {
             continue;
         }
 
-        tokens.append(&mut lex(&input, &mut interner));
+        match lex(&input, &mut interner) {
+            Ok(mut res) => {
+                tokens.append(&mut res);
+            }
+            Err(err) => {
+                println!("Lex Error: Invalid token {}", err);
+
+                tokens.clear();
+            }
+        }
 
         match parse(&tokens, true) {
             Ok(mut program) => {
@@ -77,35 +86,33 @@ fn interactive_mode() -> io::Result<()> {
                 tokens.clear();
                 more_tokens = false;
 
-                println!("Unexpected token: {:?}", err.0);
+                println!("Compile Error: Unexpected token {:?}", err.0);
             }
         }
     }
 }
 
 fn main() -> Result<(), io::Error> {
-    let args: Vec<String> = env::args().collect();
+    if let Some(pathname) = env::args().nth(1) {
+        // Normal mode
+        let content = fs::read_to_string(pathname)?;
 
-    if args.len() == 1 {
-        return interactive_mode();
-    }
+        let mut interner = StringInterner::new();
+        let tokens = lex(&content, &mut interner).unwrap();
+        let program = parse(&tokens, false).unwrap();
 
-    let pathname = args.get(1).expect("Please provide a path to the script.");
+        let code_object = Gc::new(compile(&program, &interner).unwrap());
 
-    let content = fs::read_to_string(pathname)?;
+        let mut vm = Vm::new(true);
+        vm.push_frame(code_object, &[]);
 
-    let mut interner = StringInterner::new();
-    let tokens = lex(&content, &mut interner);
-    let program = parse(&tokens, false).unwrap();
-
-    let code_object = Gc::new(compile(&program, &interner).unwrap());
-
-    let mut vm = Vm::new(true);
-    vm.push_frame(code_object, &[]);
-
-    while !vm.finished {
-        vm.step();
-    }
+        while !vm.finished {
+            vm.step();
+        }
+    } else {
+        // Interactive mode
+        interactive_mode()?;
+    };
 
     Ok(())
 }
