@@ -10,6 +10,7 @@ pub mod bytecode;
 pub mod compiler;
 pub mod native_func;
 pub mod token;
+pub mod vm;
 
 pub fn lex<'a>(
     program: &'a str,

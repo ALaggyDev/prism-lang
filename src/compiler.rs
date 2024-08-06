@@ -3,9 +3,10 @@ use string_interner::{DefaultBackend, StringInterner};
 
 use crate::{
     ast::{BinaryOp, Block, CompileError, Expr, FuncDecl, Stmt, UnaryOp},
-    bytecode::{Callable, CodeObject, Instr, Value},
+    bytecode::Instr,
     instr,
     token::{Ident, Literal},
+    vm::{Callable, CodeObject, Value},
 };
 
 #[derive(Clone, Debug)]

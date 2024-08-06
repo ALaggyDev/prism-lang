@@ -1,9 +1,9 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use gc::Gc;
 use prism_lang::{
-    bytecode::{Callable, CodeObject, Value, Vm},
     compiler::compile,
     instr, lex, parse,
+    vm::{Callable, CodeObject, Value, Vm},
 };
 use string_interner::StringInterner;
 

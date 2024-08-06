@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use gc::Gc;
 use itertools::Itertools;
 
-use crate::bytecode::{Callable, NativeFunc, Value};
+use crate::vm::{Callable, NativeFunc, Value};
 
 pub fn print(args: &[Value]) -> Value {
     // If objects have circular references, a naive print approach will crash the program.

@@ -1,8 +1,8 @@
 use gc::Gc;
 use prism_lang::ast::{Expr, Stmt};
-use prism_lang::bytecode::Vm;
 use prism_lang::compiler::compile;
 use prism_lang::token::{Ident, Token};
+use prism_lang::vm::Vm;
 use prism_lang::{lex, parse};
 use std::io::Write;
 use std::{env, fs, io};
