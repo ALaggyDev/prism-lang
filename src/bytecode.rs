@@ -1,6 +1,6 @@
 use std::fmt;
 
-use gc::{unsafe_empty_trace, Finalize, Trace};
+use gc_arena::Collect;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(u16)]
@@ -46,12 +46,9 @@ pub enum InstrKind {
     Return,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Finalize)]
+#[derive(Copy, Clone, PartialEq, Eq, Collect)]
+#[collect(require_static)]
 pub struct Instr(u64);
-
-unsafe impl Trace for Instr {
-    unsafe_empty_trace!();
-}
 
 impl Instr {
     pub fn new_1(kind: InstrKind, a1: u16) -> Self {

@@ -1,11 +1,11 @@
 use std::io::{self, Write};
 
-use gc::Gc;
+use gc_arena::{Gc, Mutation};
 use itertools::Itertools;
 
 use crate::vm::{Callable, NativeFunc, Value};
 
-pub fn print(args: &[Value]) -> Value {
+pub fn print<'gc>(args: &[Value<'gc>], _: &Mutation<'gc>) -> Value<'gc> {
     // If objects have circular references, a naive print approach will crash the program.
     // Therefore we need to store the objects we have visited.
 
@@ -66,7 +66,7 @@ fn print_inner(visited: &mut Vec<*const ()>, value: &Value) -> String {
     }
 }
 
-pub fn input(args: &[Value]) -> Value {
+pub fn input<'gc>(args: &[Value<'gc>], mc: &Mutation<'gc>) -> Value<'gc> {
     if !args.is_empty() {
         let mut visited: Vec<*const ()> = vec![];
         print!("{}", print_inner(&mut visited, &args[0]));
@@ -77,7 +77,7 @@ pub fn input(args: &[Value]) -> Value {
     io::stdin().read_line(&mut input).unwrap();
     trim_newline(&mut input);
 
-    Value::String(Gc::new(input.into()))
+    Value::String(Gc::new(mc, input.into()))
 }
 
 fn trim_newline(s: &mut String) {
@@ -89,4 +89,5 @@ fn trim_newline(s: &mut String) {
     }
 }
 
-pub static NATIVE_FUNCS: &[(&str, NativeFunc)] = &[("print", print), ("input", input)];
+pub static NATIVE_FUNCS: &[(&str, NativeFunc)] =
+    &[("print", NativeFunc(print)), ("input", NativeFunc(input))];

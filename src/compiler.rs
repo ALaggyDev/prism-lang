@@ -1,4 +1,4 @@
-use gc::Gc;
+use gc_arena::{Gc, Mutation};
 use string_interner::{DefaultBackend, StringInterner};
 
 use crate::{
@@ -9,11 +9,10 @@ use crate::{
     vm::{Callable, CodeObject, Value},
 };
 
-#[derive(Clone, Debug)]
-pub struct CompileState<'a> {
+pub struct CompileState<'gc, 'a> {
     code: Vec<Instr>,
     stack: Vec<Option<Ident>>,
-    consts: Vec<Value>,
+    consts: Vec<Value<'gc>>,
     global_names: Vec<Ident>,
     stack_count: u16,
     arg_count: u16,
@@ -21,10 +20,11 @@ pub struct CompileState<'a> {
     is_global: bool,
     context_count: usize,
 
+    mc: &'gc Mutation<'gc>,
     interner: &'a StringInterner<DefaultBackend>,
 }
 
-impl<'a> CompileState<'a> {
+impl<'gc, 'a> CompileState<'gc, 'a> {
     pub fn add_instr(&mut self, instr: Instr) {
         self.code.push(instr);
     }
@@ -40,9 +40,9 @@ impl<'a> CompileState<'a> {
         slot
     }
 
-    pub fn add_const(&mut self, value: Value) -> u16 {
+    pub fn add_const(&mut self, value: Value<'gc>) -> u16 {
         // Find if we have already added the value (NOTE: Should Value::cmp_equal be used?)
-        if let Some(slot) = self.consts.iter().position(|val| val.cmp_equal(&value)) {
+        if let Some(slot) = self.consts.iter().position(|val| val.cmp_equal(value)) {
             slot as u16
         } else {
             // Else, add the value
@@ -92,7 +92,7 @@ impl<'a> CompileState<'a> {
         self.is_global && self.context_count == 0
     }
 
-    pub fn consume(self) -> CodeObject {
+    pub fn consume(self) -> CodeObject<'gc> {
         CodeObject {
             code: self.code.into(),
             consts: self.consts.into(),
@@ -107,12 +107,12 @@ impl<'a> CompileState<'a> {
     }
 }
 
-pub fn literal_to_value(lit: &Literal) -> Value {
+pub fn literal_to_value<'gc>(state: &CompileState<'gc, '_>, lit: &Literal) -> Value<'gc> {
     match lit {
         Literal::Null => Value::Null,
         Literal::Bool(val) => Value::Bool(*val),
         Literal::Number(val) => Value::Number(*val),
-        Literal::String(val) => Value::String(Gc::new(val.clone())),
+        Literal::String(val) => Value::String(Gc::new(state.mc, val.clone())),
     }
 }
 
@@ -150,7 +150,7 @@ pub fn handle_lvalue(
 pub fn compile_expr(state: &mut CompileState, expr: &Expr) -> Result<u16, CompileError> {
     match expr {
         Expr::Literal(lit) => {
-            let const_slot = state.add_const(literal_to_value(lit));
+            let const_slot = state.add_const(literal_to_value(state, lit));
             let slot = state.add_slot(None);
 
             state.add_instr(instr!(LoadConst, slot, const_slot));
@@ -324,7 +324,10 @@ pub fn compile_stmt(state: &mut CompileState, stmt: &Stmt) -> Result<(), Compile
 
         Stmt::Fn(ident, func_decl) => {
             let code_object = compile_fn(state, func_decl)?;
-            let code_slot = state.add_const(Value::Callable(Callable::Func(Gc::new(code_object))));
+            let code_slot = state.add_const(Value::Callable(Callable::Func(Gc::new(
+                state.mc,
+                code_object,
+            ))));
 
             if !state.at_global() {
                 // Normal context
@@ -470,7 +473,10 @@ pub fn compile_stmt(state: &mut CompileState, stmt: &Stmt) -> Result<(), Compile
     Ok(())
 }
 
-pub fn compile_fn(state: &mut CompileState, decl: &FuncDecl) -> Result<CodeObject, CompileError> {
+pub fn compile_fn<'gc>(
+    state: &mut CompileState<'gc, '_>,
+    decl: &FuncDecl,
+) -> Result<CodeObject<'gc>, CompileError> {
     let mut state = CompileState {
         code: vec![],
         stack: vec![],
@@ -482,6 +488,7 @@ pub fn compile_fn(state: &mut CompileState, decl: &FuncDecl) -> Result<CodeObjec
         is_global: false,
         context_count: 0,
 
+        mc: state.mc,
         interner: state.interner,
     };
 
@@ -508,10 +515,11 @@ pub fn compile_fn(state: &mut CompileState, decl: &FuncDecl) -> Result<CodeObjec
 }
 
 /// Compile a program. The result is a code object representing the global context.
-pub fn compile(
+pub fn compile<'gc>(
+    mc: &'gc Mutation<'gc>,
     stmts: &[Stmt],
     interner: &StringInterner<DefaultBackend>,
-) -> Result<CodeObject, CompileError> {
+) -> Result<CodeObject<'gc>, CompileError> {
     let mut state = CompileState {
         code: vec![],
         stack: vec![],
@@ -523,6 +531,7 @@ pub fn compile(
         is_global: true,
         context_count: 0,
 
+        mc,
         interner,
     };
 

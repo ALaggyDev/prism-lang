@@ -1,8 +1,8 @@
-use gc::Gc;
+use gc_arena::Gc;
 use prism_lang::ast::{Expr, Stmt};
 use prism_lang::compiler::compile;
 use prism_lang::token::{Ident, Token};
-use prism_lang::vm::Vm;
+use prism_lang::vm::VmHandle;
 use prism_lang::{lex, parse};
 use std::io::Write;
 use std::{env, fs, io};
@@ -16,7 +16,7 @@ fn interactive_mode() -> io::Result<()> {
 
     let mut more_tokens = false;
 
-    let mut vm = Vm::new(true);
+    let mut handle = VmHandle::new(true);
 
     loop {
         // Print ... or >>>
@@ -66,15 +66,17 @@ fn interactive_mode() -> io::Result<()> {
                 }
 
                 // Compile the program
-                let code_object = Gc::new(compile(&program, &interner).unwrap());
+                handle.mutate_root(|mc, root| {
+                    let code_object = Gc::new(mc, compile(mc, &program, &interner).unwrap());
 
-                // Execute
-                vm.push_frame(code_object, &[]);
+                    root.push_frame(code_object, &[]);
+                });
 
-                vm.finished = false;
-                while !vm.finished {
-                    vm.step();
-                }
+                handle.mutate_root(|_, root| {
+                    root.finished = false;
+                });
+
+                handle.finish();
             }
 
             // the input simply is not finished, we keep waiting for more input
@@ -101,14 +103,15 @@ fn main() -> Result<(), io::Error> {
         let tokens = lex(&content, &mut interner).unwrap();
         let program = parse(&tokens, false).unwrap();
 
-        let code_object = Gc::new(compile(&program, &interner).unwrap());
+        let mut handle = VmHandle::new(true);
 
-        let mut vm = Vm::new(true);
-        vm.push_frame(code_object, &[]);
+        handle.mutate_root(|mc, root| {
+            let code_object = Gc::new(mc, compile(mc, &program, &interner).unwrap());
 
-        while !vm.finished {
-            vm.step();
-        }
+            root.push_frame(code_object, &[]);
+        });
+
+        handle.finish();
     } else {
         // Interactive mode
         interactive_mode()?;
