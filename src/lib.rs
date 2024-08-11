@@ -5,6 +5,7 @@ use token::Token;
 
 pub mod ast;
 pub mod bytecode;
+pub mod call_frame;
 pub mod compiler;
 pub mod native_func;
 pub mod token;

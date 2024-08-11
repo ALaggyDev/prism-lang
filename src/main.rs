@@ -69,7 +69,7 @@ fn interactive_mode() -> io::Result<()> {
                 handle.mutate_root(|mc, root| {
                     let code_object = Gc::new(mc, compile(mc, &program, &interner).unwrap());
 
-                    root.push_frame(code_object, &[]);
+                    root.frames.push_frame(code_object, &[]);
                 });
 
                 handle.mutate_root(|_, root| {
@@ -108,7 +108,7 @@ fn main() -> Result<(), io::Error> {
         handle.mutate_root(|mc, root| {
             let code_object = Gc::new(mc, compile(mc, &program, &interner).unwrap());
 
-            root.push_frame(code_object, &[]);
+            root.frames.push_frame(code_object, &[]);
         });
 
         handle.finish();

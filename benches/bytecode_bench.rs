@@ -149,7 +149,7 @@ where
     handle.mutate_root(|mc, root| {
         let code_object = f(mc);
 
-        root.push_frame(code_object, &[]);
+        root.frames.push_frame(code_object, &[]);
     });
 
     handle.finish();

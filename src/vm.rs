@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     bytecode::{Instr, InstrKind},
+    call_frame::CallFrames,
     native_func::NATIVE_FUNCS,
 };
 
@@ -33,15 +34,6 @@ pub struct CodeObject<'gc> {
     pub arg_count: u16,
 }
 
-#[derive(Clone, Debug, Collect)]
-#[collect(no_drop)]
-pub struct CallFrame<'gc> {
-    pub code_obj: Gc<'gc, CodeObject<'gc>>,
-    pub stack: Box<[Value<'gc>]>,
-    pub ip: u16,
-    pub ret_slot: u16,
-}
-
 #[derive(Copy, Clone, Debug, Collect)]
 #[collect(require_static)]
 pub struct NativeFunc(pub for<'gc> fn(args: &[Value<'gc>], mc: &Mutation<'gc>) -> Value<'gc>);
@@ -56,7 +48,7 @@ pub enum Callable<'gc> {
 #[derive(Clone, Debug, Collect)]
 #[collect(no_drop)]
 pub struct Vm<'gc> {
-    pub frames: Vec<CallFrame<'gc>>,
+    pub frames: CallFrames<'gc>,
     pub globals: HashMap<Box<str>, Value<'gc>>,
     pub finished: bool,
 }
@@ -253,40 +245,10 @@ impl<'gc> Value<'gc> {
     }
 }
 
-impl<'gc> CallFrame<'gc> {
-    pub fn new(code_obj: Gc<'gc, CodeObject<'gc>>, args: &[Value<'gc>]) -> Self {
-        if code_obj.arg_count as usize != args.len() {
-            panic!("Argument count mismatch!");
-        }
-
-        let mut stack = vec![Value::Null; code_obj.stack_count as usize].into_boxed_slice();
-        stack[..args.len()].clone_from_slice(args);
-
-        Self {
-            code_obj,
-            stack,
-            ip: 0,
-            ret_slot: 0,
-        }
-    }
-
-    pub fn fetch_instr(&self) -> Option<Instr> {
-        self.code_obj.code.get(self.ip as usize).copied()
-    }
-
-    pub fn get_slot(&self, index: u16) -> &Value<'gc> {
-        &self.stack[index as usize]
-    }
-
-    pub fn get_mut_slot(&mut self, index: u16) -> &mut Value<'gc> {
-        &mut self.stack[index as usize]
-    }
-}
-
 impl<'gc> Vm<'gc> {
     pub fn new(use_builtins: bool) -> Self {
         let mut vm = Vm {
-            frames: vec![],
+            frames: CallFrames::new(),
             globals: HashMap::new(),
             finished: false,
         };
@@ -303,28 +265,17 @@ impl<'gc> Vm<'gc> {
         vm
     }
 
-    pub fn push_frame(&mut self, code_object: Gc<'gc, CodeObject<'gc>>, args: &[Value<'gc>]) {
-        self.frames.push(CallFrame::new(code_object, args));
-    }
-
-    pub fn get_cur_frame(&self) -> &CallFrame<'gc> {
-        self.frames.last().unwrap()
-    }
-
-    pub fn get_mut_cur_frame(&mut self) -> &mut CallFrame<'gc> {
-        self.frames.last_mut().unwrap()
-    }
-
     pub fn step(&mut self, mc: &Mutation<'gc>) {
         if self.finished {
             return;
         }
 
-        let frame = self.frames.last_mut().unwrap();
+        let frame = self.frames.get_last_mut();
 
         let Some(instr) = frame.fetch_instr() else {
             if self.frames.len() == 1 {
-                self.frames.clear();
+                // global context
+                self.frames.pop_frame();
                 self.finished = true;
                 return;
             } else {
@@ -472,8 +423,9 @@ impl<'gc> Vm<'gc> {
             }
 
             InstrKind::PackTuple => {
-                let tuple: Box<[Value<'gc>]> =
-                    (&frame.stack[instr.a2() as usize..(instr.a2() + instr.a3()) as usize]).into();
+                let tuple: Box<[Value<'gc>]> = (&frame.stack_slice()
+                    [instr.a2() as usize..(instr.a2() + instr.a3()) as usize])
+                    .into();
                 *frame.get_mut_slot(instr.a1()) = Value::Tuple(Gc::new(mc, tuple));
             }
 
@@ -487,7 +439,7 @@ impl<'gc> Vm<'gc> {
                     panic!("Tuple len not match.");
                 }
 
-                frame.stack[instr.a1() as usize..(instr.a1() + instr.a3()) as usize]
+                frame.stack_slice_mut()[instr.a1() as usize..(instr.a1() + instr.a3()) as usize]
                     .clone_from_slice(&tuple);
             }
 
@@ -526,8 +478,8 @@ impl<'gc> Vm<'gc> {
                     panic!("Trying to call non-callable.");
                 };
 
-                let args =
-                    &frame.stack[(instr.a2() + 1) as usize..(instr.a2() + 1 + instr.a3()) as usize];
+                let args = &frame.stack_slice()
+                    [(instr.a2() + 1) as usize..(instr.a2() + 1 + instr.a3()) as usize];
 
                 match callable {
                     // If we are calling a native function, we don't need to create a call frame
@@ -536,11 +488,14 @@ impl<'gc> Vm<'gc> {
                     }
 
                     Callable::Func(code_obj) => {
-                        let new_frame = CallFrame::new(Gc::clone(code_obj), args);
+                        let code_obj_copy = Gc::clone(code_obj);
 
                         frame.ret_slot = instr.a2();
 
-                        self.frames.push(new_frame);
+                        self.frames.push_frame_within(
+                            code_obj_copy,
+                            (instr.a2() + 1) as usize..(instr.a2() + 1 + instr.a3()) as usize,
+                        );
                     }
                 }
             }
@@ -548,9 +503,9 @@ impl<'gc> Vm<'gc> {
             InstrKind::Return => {
                 let ret_val = *frame.get_slot(instr.a1());
 
-                self.frames.pop();
+                self.frames.pop_frame();
 
-                let old_frame = self.get_mut_cur_frame();
+                let old_frame = self.frames.get_last_mut();
                 *old_frame.get_mut_slot(old_frame.ret_slot) = ret_val;
             }
         }
